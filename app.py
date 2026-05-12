@@ -10,46 +10,50 @@ from streamlit_gsheets import GSheetsConnection
 
 st.set_page_config(page_title="ジョイフル シフト管理PRO", layout="wide")
 
-# --- 1. スプレッドシート接続設定 ---
+# --- 1. スプレッドシート設定 ---
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1dDyKAXYsHZg1ta4l7te84uSbhSea-FoyVgTeo4-kgkI/edit?gid=0#gid=0"
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-def load_sheet(worksheet_name, default_df=None):
-    """スプレッドシートから読み込み、掃除する"""
+def load_sheet(worksheet_name, default_df):
+    """スプレッドシートから読み込む。失敗しても勝手に保存はしない。"""
     try:
         df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=worksheet_name, ttl=0)
-        if df is None or df.empty:
-            return default_df
-        df = df.dropna(how='all', axis=0)
-        first_col = df.columns[0]
-        df = df.drop_duplicates(subset=first_col, keep='first')
-        df = df.set_index(first_col)
-        df.index = df.index.astype(str).str.strip()
-        return df
+        if df is not None and not df.empty:
+            # 重複と空白の掃除
+            df = df.dropna(how='all', axis=0)
+            first_col = df.columns[0]
+            df = df.drop_duplicates(subset=first_col, keep='first')
+            df = df.set_index(first_col)
+            df.index = df.index.astype(str).str.strip()
+            return df
+        return default_df
     except Exception:
         return default_df
 
 def save_sheet(df, worksheet_name):
-    """データを保存する（スマホからでもエラーが出にくい方式）"""
+    """データを保存する。スタイル情報を完全に排除して保存。"""
     try:
+        # スタイル付きデータ(Styler)の場合は生データを取り出す
         if hasattr(df, 'data'):
-            df = df.data # Styler解除
+            df = df.data
         
         save_df = df.copy()
+        # インデックス名を固定
         save_df.index.name = "名前"
+        # 全ての値を確実に保存可能な形式にする
         save_df = save_df.reset_index()
         
-        # 既存のシートを更新。もしシートがない場合は自動作成（最新方式）
+        # 保存実行
         conn.update(spreadsheet=SPREADSHEET_URL, worksheet=worksheet_name, data=save_df)
         st.cache_data.clear()
+        time.sleep(2) # Google側の反映を待つ
         return True
     except Exception as e:
-        # シートがない場合のエラーメッセージ
-        st.error(f"【保存失敗】タブ '{worksheet_name}' がスプレッドシートに見当たりません。")
-        st.info("お手数ですが、スプレッドシートの下の『＋』で、この名前のタブを作成してください。")
+        st.error(f"【保存失敗】'{worksheet_name}' への保存に失敗しました。")
+        st.info("タブ名が正しいか、通信環境が良いか確認してください。")
         return False
 
-# --- 2. 補助関数 ---
+# --- 2. 共通設定 ---
 WEEKDAYS_JP = ["月", "火", "水", "木", "金", "土", "日"]
 SHIFT_OPTIONS = ["", "10:00-18:00", "18:00-23:00", "10:00-23:00", "10:00-15:00", "11:00-18:00", "17:00-23:00", "18:30-23:00", "19:00-23:00"]
 
@@ -67,60 +71,60 @@ def parse_range(r_str):
     except: return 10.0, 23.0
 
 # --- 3. データの初期化 (25名最新リスト) ---
-def init_system_data():
-    master_df_raw = load_sheet("staff_master")
-    if master_df_raw is None:
-        data = [
-            {"名前": "多田（店長）", "職種": "👔社員", "レジ締め": True, "デザート": True, "週希望": 6, "傾向": "ALL"},
-            {"名前": "河野", "職種": "👔社員", "レジ締め": True, "デザート": True, "週希望": 6, "傾向": "ALL"},
-            {"名前": "末益", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 6, "傾向": "ALL"},
-            {"名前": "扇", "職種": "☕DF", "レジ締め": True, "デザート": True, "週希望": 4, "傾向": "NIGHT"},
-            {"名前": "高木", "職種": "☕DF", "レジ締め": True, "デザート": True, "週希望": 4, "傾向": "NIGHT"},
-            {"名前": "笹谷", "職種": "☕DF", "レジ締め": True, "デザート": True, "週希望": 4, "傾向": "NIGHT"},
-            {"名前": "西村", "職種": "☕DF", "レジ締め": True, "デザート": True, "週希望": 3, "傾向": "NIGHT"},
-            {"名前": "武久", "職種": "☕DF", "レジ締め": False, "デザート": False, "週希望": 4, "傾向": "NIGHT"},
-            {"名前": "持田", "職種": "☕DF", "レジ締め": False, "デザート": False, "週希望": 2, "傾向": "NIGHT"},
-            {"名前": "永田", "職種": "☕DF", "レジ締め": False, "デザート": False, "週希望": 2, "傾向": "NIGHT"},
-            {"名前": "宝村", "職種": "☕DF", "レジ締め": False, "デザート": False, "週希望": 3, "傾向": "NIGHT"},
-            {"名前": "竹浦", "職種": "☕DF", "レジ締め": False, "デザート": False, "週希望": 2, "傾向": "NIGHT"},
-            {"名前": "宮川", "職種": "☕DF", "レジ締め": False, "デザート": False, "週希望": 3, "傾向": "NIGHT"},
-            {"名前": "キサン", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 4, "傾向": "NIGHT"},
-            {"名前": "太田", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 3, "傾向": "NIGHT"},
-            {"名前": "小田川", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 4, "傾向": "NIGHT"},
-            {"名前": "内田", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 5, "傾向": "NIGHT"},
-            {"名前": "十河", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 3, "傾向": "NIGHT"},
-            {"名前": "井上", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 3, "傾向": "DAY"},
-            {"名前": "蜂谷", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 4, "傾向": "NIGHT"},
-            {"名前": "八田", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 3, "傾向": "NIGHT"},
-            {"名前": "西田", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 4, "傾向": "DAY"},
-            {"名前": "清水", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 4, "傾向": "NIGHT"},
-            {"名前": "松村", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 5, "傾向": "DAY"},
-            {"名前": "渡部", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 5, "傾向": "DAY"},
-        ]
-        master_df = pd.DataFrame(data).set_index("名前")
-        save_sheet(master_df, "staff_master")
-    else:
-        master_df = master_df_raw
+# 初回起動時のみ使うデータ
+def get_initial_data():
+    return [
+        {"名前": "多田（店長）", "職種": "👔社員", "レジ締め": True, "デザート": True, "週希望": 6, "傾向": "ALL"},
+        {"名前": "河野", "職種": "👔社員", "レジ締め": True, "デザート": True, "週希望": 6, "傾向": "ALL"},
+        {"名前": "末益", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 6, "傾向": "ALL"},
+        {"名前": "扇", "職種": "☕DF", "レジ締め": True, "デザート": True, "週希望": 4, "傾向": "NIGHT"},
+        {"名前": "高木", "職種": "☕DF", "レジ締め": True, "デザート": True, "週希望": 4, "傾向": "NIGHT"},
+        {"名前": "笹谷", "職種": "☕DF", "レジ締め": True, "デザート": True, "週希望": 4, "傾向": "NIGHT"},
+        {"名前": "西村", "職種": "☕DF", "レジ締め": True, "デザート": True, "週希望": 3, "傾向": "NIGHT"},
+        {"名前": "武久", "職種": "☕DF", "レジ締め": False, "デザート": False, "週希望": 4, "傾向": "NIGHT"},
+        {"名前": "持田", "職種": "☕DF", "レジ締め": False, "デザート": False, "週希望": 2, "傾向": "NIGHT"},
+        {"名前": "永田", "職種": "☕DF", "レジ締め": False, "デザート": False, "週希望": 2, "傾向": "NIGHT"},
+        {"名前": "宝村", "職種": "☕DF", "レジ締め": False, "デザート": False, "週希望": 3, "傾向": "NIGHT"},
+        {"名前": "竹浦", "職種": "☕DF", "レジ締め": False, "デザート": False, "週希望": 2, "傾向": "NIGHT"},
+        {"名前": "宮川", "職種": "☕DF", "レジ締め": False, "デザート": False, "週希望": 3, "傾向": "NIGHT"},
+        {"名前": "キサン", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 4, "傾向": "NIGHT"},
+        {"名前": "太田", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 3, "傾向": "NIGHT"},
+        {"名前": "小田川", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 4, "傾向": "NIGHT"},
+        {"名前": "内田", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 5, "傾向": "NIGHT"},
+        {"名前": "十河", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 3, "傾向": "NIGHT"},
+        {"名前": "井上", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 3, "傾向": "DAY"},
+        {"名前": "蜂谷", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 4, "傾向": "NIGHT"},
+        {"名前": "八田", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 3, "傾向": "NIGHT"},
+        {"名前": "西田", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 4, "傾向": "DAY"},
+        {"名前": "清水", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 4, "傾向": "NIGHT"},
+        {"名前": "松村", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 5, "傾向": "DAY"},
+        {"名前": "渡部", "職種": "🍳DK", "レジ締め": False, "デザート": False, "週希望": 5, "傾向": "DAY"},
+    ]
 
-    master_df['表示名'] = master_df['職種'].astype(str).str.strip() + " " + master_df.index.astype(str).str.strip()
-    all_names = master_df['表示名'].unique().tolist()
-    staff_info_dict = master_df.set_index('表示名').to_dict('index')
-    return master_df, all_names, staff_info_dict
+# 名簿の読み込み（失敗しても止まらない）
+master_df = load_sheet("staff_master", pd.DataFrame())
+if master_df.empty:
+    master_df = pd.DataFrame(get_initial_data()).set_index("名前")
+    st.warning("名簿が読み込めませんでした。初期データを表示します。保存ボタンでスプレッドシートに書き込まれます。")
 
-master_df, ALL_NAMES, staff_info = init_system_data()
+master_df['表示名'] = master_df['職種'].astype(str).str.strip() + " " + master_df.index.astype(str).str.strip()
+ALL_NAMES = master_df['表示名'].unique().tolist()
+staff_info = master_df.set_index('表示名').to_dict('index')
 
-# 曜日別・必要人数読み込み
-avail_df = load_sheet("staff_availability")
-if avail_df is None:
+# 曜日別設定
+avail_df = load_sheet("staff_availability", pd.DataFrame())
+if avail_df.empty:
     avail_df = pd.DataFrame([[n] + ["10.0-23.0"]*7 for n in ALL_NAMES], columns=["名前"] + WEEKDAYS_JP).set_index("名前")
-    save_sheet(avail_df, "staff_availability")
 else:
     avail_df = avail_df.reindex(ALL_NAMES).fillna("10.0-23.0")
 
-req_groups = load_sheet("required_staff")
-if req_groups is None:
-    req_groups = pd.DataFrame(2, index=[f"{h}:{m}" for h in range(10, 23) for m in ["00", "30"]] + ["23:00"], columns=["月火水木_ホール", "月火水木_キッチン", "金土_ホール", "金土_キッチン", "日_ホール", "日_キッチン"])
-    save_sheet(req_groups, "required_staff")
+# 必要人数設定
+REQ_STAFF_FILE = "required_staff"
+req_groups = load_sheet(REQ_STAFF_FILE, pd.DataFrame())
+time_slots = [f"{h}:{m}" for h in range(10, 23) for m in ["00", "30"]] + ["23:00"]
+if req_groups.empty:
+    req_groups = pd.DataFrame(2, index=time_slots, columns=["月火水木_ホール", "月火水木_キッチン", "金土_ホール", "金土_キッチン", "日_ホール", "日_キッチン"])
+    req_groups.index.name = "時間"
 
 # --- 4. 月管理 ---
 if 'view_date' not in st.session_state:
@@ -132,55 +136,70 @@ column_names = [f"{d}({WEEKDAYS_JP[calendar.weekday(year, month, d)]})" for d in
 REQ_SHEET_NAME = f"req_{year}_{month:02}"
 SHIFT_SHEET_NAME = f"shift_{year}_{month:02}"
 
-# --- 5. メニュー ---
+# --- 5. UI設定 ---
 st.sidebar.title("ジョイフル シフトWeb")
-pw = st.sidebar.text_input("パスワード", type="password")
+pw = st.sidebar.text_input("管理者パスワードを入力", type="password")
 is_admin = (pw == "1234")
-mode = st.sidebar.radio("メニュー", ["① 休み希望入力", "② 従業員設定", "③ 曜日別設定", "④ シフト案作成"])
+mode = st.sidebar.radio("モード選択", ["① 休み希望入力", "② 従業員基本設定", "③ 曜日別可能時間(バー)", "④ シフト案作成"])
 
+# --- ① 休み希望 ---
 if mode == "① 休み希望入力":
     st.header(f"📅 {year}年{month}月の休み希望")
-    req_df = load_sheet(REQ_SHEET_NAME)
-    if req_df is None: req_df = pd.DataFrame(False, index=ALL_NAMES, columns=column_names)
-    else: req_df = req_df.reindex(ALL_NAMES).fillna(False).map(lambda x: str(x).lower() in ['true', '1', 'yes'])
-    edited = st.data_editor(req_df, use_container_width=True, height=700)
-    if st.button("💾 保存"):
-        if save_sheet(edited, REQ_SHEET_NAME): st.success("保存完了")
+    
+    # セッションを使ってデータ消失を防ぐ
+    if f'req_data_{year}_{month}' not in st.session_state:
+        r_raw = load_sheet(REQ_SHEET_NAME, pd.DataFrame(False, index=ALL_NAMES, columns=column_names))
+        st.session_state[f'req_data_{year}_{month}'] = r_raw.reindex(ALL_NAMES).fillna(False).map(lambda x: str(x).lower() in ['true', '1', 'yes'])
 
-elif mode == "② 従業員設定":
-    if not is_admin: st.error("管理者専用")
-    else:
-        edited = st.data_editor(master_df, use_container_width=True, num_rows="dynamic")
-        if st.button("💾 保存"): save_sheet(edited, "staff_master")
+    edited_req = st.data_editor(st.session_state[f'req_data_{year}_{month}'], use_container_width=True, height=750)
+    
+    if st.button("💾 この月の希望を保存"):
+        if save_sheet(edited_req, REQ_SHEET_NAME):
+            st.session_state[f'req_data_{year}_{month}'] = edited_req
+            st.success("スプレッドシートへ正常に保存されました！")
 
-elif mode == "③ 曜日別設定":
-    if not is_admin: st.error("管理者専用")
+# --- ② 基本設定 ---
+elif mode == "② 従業員基本設定":
+    if not is_admin: st.error("管理者専用です")
     else:
-        target = st.selectbox("スタッフ", ALL_NAMES)
+        st.header("⚙️ 従業員名簿管理")
+        edited_master = st.data_editor(master_df, use_container_width=True, num_rows="dynamic")
+        if st.button("💾 名簿を保存"):
+            save_sheet(edited_master, "staff_master")
+
+# --- ③ 曜日別バー ---
+elif mode == "③ 曜日別可能時間(バー)":
+    if not is_admin: st.error("管理者専用です")
+    else:
+        target = st.selectbox("スタッフ選択", ALL_NAMES)
         new_times = {}
         for wd in WEEKDAYS_JP:
-            s_f, e_f = parse_range(avail_df.at[target, wd])
-            res = st.slider(f"{wd}曜日", 10.0, 23.0, (float(s_f), float(e_f)), step=0.5)
+            raw_val = avail_df.at[target, wd] if target in avail_df.index else "10.0-23.0"
+            s_f, e_f = parse_range(raw_val)
+            res = st.slider(wd, 10.0, 23.0, (float(s_f), float(e_f)), step=0.5, key=f"s_{target}_{wd}")
             new_times[wd] = f"{res[0]}-{res[1]}"
-        if st.button("💾 保存"):
+        if st.button(f"💾 {target} の時間を保存"):
             for wd, t in new_times.items(): avail_df.at[target, wd] = t
             save_sheet(avail_df, "staff_availability")
 
+# --- ④ シフト案作成 ---
 else:
-    if not is_admin: st.error("管理者専用")
+    if not is_admin: st.error("管理者用です")
     else:
         st.header(f"📝 {year}年{month}月のシフト案")
-        req_load = load_sheet(REQ_SHEET_NAME)
-        req_load = req_load.reindex(ALL_NAMES).fillna(False).map(lambda x: str(x).lower() in ['true', '1', 'yes']) if req_load is not None else pd.DataFrame(False, index=ALL_NAMES, columns=column_names)
         
+        # 休み希望データの読み込み
+        req_load = load_sheet(REQ_SHEET_NAME, pd.DataFrame(False, index=ALL_NAMES, columns=column_names))
+        req_load = req_load.reindex(ALL_NAMES).fillna(False).map(lambda x: str(x).lower() in ['true', '1', 'yes'])
+
         if 'shift_cache' not in st.session_state:
-            s_raw = load_sheet(SHIFT_SHEET_NAME)
-            st.session_state.shift_cache = s_raw.reindex(ALL_NAMES).fillna("") if s_raw is not None else pd.DataFrame("", index=ALL_NAMES, columns=column_names)
+            s_raw = load_sheet(SHIFT_SHEET_NAME, pd.DataFrame("", index=ALL_NAMES, columns=column_names))
+            st.session_state.shift_cache = s_raw.reindex(ALL_NAMES).fillna("")
         
         current_df = st.session_state.shift_cache
-        
-        col_act1, col_act2 = st.columns([2, 1])
-        with col_act1:
+
+        col_a1, col_a2 = st.columns([2, 1])
+        with col_a1:
             if st.button("🤖 自動生成実行"):
                 new_s = pd.DataFrame("", index=ALL_NAMES, columns=column_names)
                 work_counts = {n: 0 for n in ALL_NAMES}; target_counts = {n: staff_info[n]['週希望']*4.3 for n in ALL_NAMES}
@@ -199,8 +218,7 @@ else:
                             new_s.at[n, col] = f"{t_st}-18:00"; work_counts[n]+=1; h_cnt+=1
                 st.session_state.shift_cache = new_s; st.rerun()
 
-        with col_act2:
-            # Excel保存
+        with col_a2:
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 current_df.to_excel(writer, sheet_name='シフト')
@@ -208,7 +226,11 @@ else:
                 fmt = wb.add_format({'border':1, 'align':'center'})
                 name_fmt = wb.add_format({'bold':True, 'border':1, 'bg_color':'#F2F2F2'})
                 ws.set_column(0,0,25,name_fmt); ws.set_column(1,len(column_names),12,fmt)
-            st.download_button("📥 見やすいExcel保存", output.getvalue(), f"shift_{year}_{month:02}.xlsx")
+                for c_idx, val in enumerate(current_df.columns):
+                    if "(土)" in val: ws.write(0, c_idx + 1, val, wb.add_format({'bold':True, 'bg_color':'#CCE5FF', 'font_color':'#0000FF', 'border':1}))
+                    elif "(日)" in val: ws.write(0, c_idx + 1, val, wb.add_format({'bold':True, 'bg_color':'#FFCCCC', 'font_color':'#FF0000', 'border':1}))
+                ws.freeze_panes(1, 1)
+            st.download_button("📥 Excelで保存", output.getvalue(), f"shift_{year}_{month:02}.xlsx")
 
         def highlight_logic(data):
             styles = pd.DataFrame('', index=data.index, columns=data.columns)
