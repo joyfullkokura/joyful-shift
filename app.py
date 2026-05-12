@@ -190,25 +190,60 @@ else:
         with col_a1:
             if st.button("🤖 公平自動生成実行"):
                 new_s = pd.DataFrame("", index=ALL_NAMES, columns=column_names)
-                work_counts = {n: 0 for n in ALL_NAMES}; target_counts = {n: staff_info[n]['週希望']*4.3 for n in ALL_NAMES}
+                work_counts = {n: 0 for n in ALL_NAMES}
+                # 週希望が設定されていない場合(0)は1として計算しエラーを防ぐ
+                target_counts = {n: (staff_info[n]['週希望'] if staff_info[n]['週希望'] > 0 else 1) * 4.3 for n in ALL_NAMES}
+
                 for i, col in enumerate(column_names):
                     wd_jp = WEEKDAYS_JP[calendar.weekday(year, month, i+1)]
                     g_key = "月火水木" if wd_jp in ["月","火","水","木"] else ("金土" if wd_jp in ["金","土"] else "日")
-                    thd, tkd = int(edited_req_groups.at["12:00", f"{g_key}_ホール"]), int(edited_req_groups.at["12:00", f"{g_key}_キッチン"])
-                    thn, tkn = int(edited_req_groups.at["19:00", f"{g_key}_ホール"]), int(edited_req_groups.at["19:00", f"{g_key}_キッチン"])
-                    capable = [n for n in ALL_NAMES if not req_load.at[n, col]]
-                    random.shuffle(capable); capable.sort(key=lambda n: (work_counts[n]/target_counts[n] if target_counts[n]>0 else 99, random.random()))
-                    h_cnt, k_cnt, has_cl = 0, 0, 0, 0, False
+                    
+                    # 必要人数の取得（エラー対策：12:00や19:00が見つからない場合はデフォルト2名にする）
+                    try:
+                        thd = int(edited_req_groups.at["12:00", f"{g_key}_ホール"])
+                        tkd = int(edited_req_groups.at["12:00", f"{g_key}_キッチン"])
+                        thn = int(edited_req_groups.at["19:00", f"{g_key}_ホール"])
+                        tkn = int(edited_req_groups.at["19:00", f"{g_key}_キッチン"])
+                    except:
+                        # 指定の時間が見つからない場合のバックアップ
+                        thd, tkd, thn, tkn = 2, 2, 3, 2
+
+                    capable = [n for n in ALL_NAMES if not req_load.get(col, pd.Series(False)).at[n]]
+                    random.shuffle(capable)
+                    # 充足率（働いた回数÷目標）が低い人を優先的に並べ替え
+                    capable.sort(key=lambda n: (work_counts[n]/target_counts[n], random.random()))
+
+                    h_cnt_d, k_cnt_d, h_cnt_n, k_cnt_n, has_cl = 0, 0, 0, 0, False
+                    
                     for n in capable:
-                        sf, ef = parse_range(avail_df.at[n, wd_jp]); role = staff_info[n]['職種']
+                        # 曜日別の出勤可能時間を取得
+                        raw_time = avail_df.at[n, wd_jp] if n in avail_df.index else "10.0-23.0"
+                        sf, ef = parse_range(raw_time)
                         if sf >= ef: continue
+                        
                         tst = f"{int(sf)}:00" if sf%1==0 else f"{int(sf)}:30"
+                        role = staff_info[n]['職種']
+
+                        # 1. レジ締め優先確保
                         if staff_info[n]['レジ締め'] and ef >= 23 and not has_cl:
-                            new_s.at[n, col] = f"{tst}-23:00"; work_counts[n]+=1; has_cl=True
+                            new_s.at[n, col] = f"{tst}-23:00"; work_counts[n]+=1; h_cnt_n+=1; has_cl=True
+                        
+                        # 2. 昼枠（18時まで入れる人）
                         elif sf <= 11 and ef >= 18:
-                            if ("☕" in role or "👔" in role) and h_cnt < thd: new_s.at[n, col] = f"{tst}-18:00"; work_counts[n]+=1; h_cnt+=1
-                            elif ("🍳" in role or "👔" in role) and k_cnt < tkd: new_s.at[n, col] = f"{tst}-18:00"; work_counts[n]+=1; k_cnt+=1
-                st.session_state.shift_cache = new_s; st.rerun()
+                            if ("☕" in role or "👔" in role) and h_cnt_d < thd:
+                                new_s.at[n, col] = f"{tst}-18:00"; work_counts[n]+=1; h_cnt_d+=1
+                            elif ("🍳" in role or "👔" in role) and k_cnt_d < tkd:
+                                new_s.at[n, col] = f"{tst}-18:00"; work_counts[n]+=1; k_cnt_d+=1
+                        
+                        # 3. 夜枠（23時まで入れる人）
+                        elif ef >= 23:
+                            if ("☕" in role or "👔" in role) and h_cnt_n < thn:
+                                new_s.at[n, col] = f"{tst}-23:00"; work_counts[n]+=1; h_cnt_n+=1
+                            elif ("🍳" in role or "👔" in role) and k_cnt_n < tkn:
+                                new_s.at[n, col] = f"{tst}-23:00"; work_counts[n]+=1; k_cnt_n+=1
+                
+                st.session_state.shift_cache = new_s
+                st.rerun()
 
         with col_a2:
             output = io.BytesIO()
