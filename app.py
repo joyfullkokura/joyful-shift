@@ -164,7 +164,28 @@ elif mode == MENU_SHIFT:
 
         st.divider()
         # 休み希望読み込み
-        r_load_raw = load_sheet_cached(REQ_SHEET, pd.DataFrame(False, index=ALL_NAMES, columns=column_names))
+        # --- ④ シフト作成 の冒頭をこれに差し替え ---
+else:
+    if not is_admin:
+        st.error("管理者パスワードを入力してください")
+    else:
+        st.header(f"📝 {year}年{month}月のシフト案")
+        
+        # 【修正ポイント】キャッシュ(ttl)を0にして、強制的に最新の休み希望を取得する
+        r_load_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=REQ_SHEET, ttl=0) 
+        
+        if r_load_raw is not None and not r_load_raw.empty:
+            # 重複削除と名前の掃除
+            r_load_raw = r_load_raw.drop_duplicates(subset=r_load_raw.columns[0])
+            req_load = r_load_raw.set_index(r_load_raw.columns[0])
+            req_load.index = req_load.index.astype(str).str.strip()
+            req_load = req_load.reindex(ALL_NAMES).fillna(False)
+            # 文字列でもチェックボックスでも確実にTrue/Falseとして判定
+            req_load = req_load.map(lambda x: str(x).upper() == "TRUE")
+        else:
+            req_load = pd.DataFrame(False, index=ALL_NAMES, columns=column_names)
+
+        # (この下の人数設定や自動生成ボタンのロジックへ続く...)
         req_load = r_load_raw.reindex(ALL_NAMES).fillna(False).map(lambda x: str(x).lower() in ['true', '1', 'yes'])
 
         # シフトデータ保持
