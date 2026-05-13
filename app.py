@@ -163,30 +163,23 @@ elif mode == MENU_SHIFT:
             if st.button("💾 人数設定を保存"): save_sheet_robust(curr_req, "required_staff")
 
         st.divider()
-        # --- ④ シフト作成 の冒頭をこれに差し替え ---
-else:
-    if not is_admin:
-        st.error("管理者パスワードを入力してください")
-    else:
-        st.header(f"📝 {year}年{month}月のシフト案")
-        
-        # 【修正ポイント】キャッシュ(ttl)を0にして、強制的に最新の休み希望を取得する
-        r_load_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=REQ_SHEET, ttl=0) 
+        # ==================== 【修正版】休み希望読み込み ====================
+        # ttl=0 にして、キャッシュを無視して今すぐスプレッドシートの最新状態を取りに行く
+        r_load_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=REQ_SHEET, ttl=0)
         
         if r_load_raw is not None and not r_load_raw.empty:
             # 重複削除と名前の掃除
             r_load_raw = r_load_raw.drop_duplicates(subset=r_load_raw.columns[0])
             req_load = r_load_raw.set_index(r_load_raw.columns[0])
             req_load.index = req_load.index.astype(str).str.strip()
+            # 名簿と合体させ、空白は「休みじゃない(False)」で埋める
             req_load = req_load.reindex(ALL_NAMES).fillna(False)
-            # 文字列でもチェックボックスでも確実にTrue/Falseとして判定
+            # 文字列の "TRUE" も、チェックボックスの True も、確実に「休み(True)」として判定する
             req_load = req_load.map(lambda x: str(x).upper() == "TRUE")
         else:
             req_load = pd.DataFrame(False, index=ALL_NAMES, columns=column_names)
 
-        # (この下の人数設定や自動生成ボタンのロジックへ続く...)
-
-        # シフトデータ保持
+        # ==================== シフトデータ保持 ====================
         shift_key = f"shift_cache_{year}_{month}"
         if shift_key not in st.session_state:
             s_raw = load_sheet_cached(SHIFT_SHEET, pd.DataFrame("", index=ALL_NAMES, columns=column_names))
@@ -201,12 +194,6 @@ else:
                 work_counts = {n: 0 for n in ALL_NAMES}
                 target_counts = {n: (staff_info[n]['週希望'] if staff_info[n]['週希望']>0 else 1)*4.3 for n in ALL_NAMES}
                 
-                # 【重要】休み希望を再読み込みし、確実にTrue/Falseに変換
-                r_raw = load_sheet_cached(REQ_SHEET, pd.DataFrame(False, index=ALL_NAMES, columns=column_names))
-                req_checker = r_raw.reindex(ALL_NAMES).fillna(False)
-                # 全てのセルの文字を大文字にして "TRUE" かどうかで判定する（これで確実になります）
-                req_checker = req_checker.map(lambda x: str(x).upper() == "TRUE")
-
                 for i, col in enumerate(column_names):
                     wd_jp = WEEKDAYS_JP[calendar.weekday(year, month, i+1)]
                     g_key = "月火水木" if wd_jp in ["月","火","水","木"] else ("金土" if wd_jp in ["金","土"] else "日")
@@ -218,11 +205,11 @@ else:
                         tkn = int(curr_req.at["19:00", f"{g_key}_キッチン"])
                     except: thd, tkd, thn, tkn = 2, 2, 3, 2
                     
-                    # 【ここが修正ポイント】休み希望(True)の人は絶対に除外する
-                    capable = [n for n in ALL_NAMES if req_checker.at[n, col] == False]
+                    # 【重要】ここを req_load（最新の休み希望）を使って判定するように修正
+                    capable = [n for n in ALL_NAMES if req_load.at[n, col] == False]
                     
                     random.shuffle(capable)
-                    capable.sort(key=lambda n: (work_counts[n]/target_counts[n], random.random()))
+                    capable.sort(key=lambda n: (work_counts[n]/target_counts[n] if target_counts[n]>0 else 99, random.random()))
                     
                     hd_c, kd_c, hn_c, kn_c, has_cl = 0, 0, 0, 0, False
                     for n in capable:
@@ -242,6 +229,53 @@ else:
                 
                 st.session_state[shift_key] = new_s
                 st.rerun()
+
+        with col_a2:
+            # Excel出力 (スタイルの競合を防ぐため current_df.copy() を使用)
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                current_df.to_excel(writer, sheet_name='シフト')
+                wb, ws = writer.book, writer.sheets['シフト']
+                ws.set_column(0,0,25); ws.set_column(1,len(column_names),12)
+            st.download_button("📥 Excel保存", output.getvalue(), f"shift_{year}_{month:02}.xlsx")
+
+        # ==================== 【修正版】色付けロジック ====================
+        def highlight_logic(data):
+            # 表と同じ大きさの、色の設定を書くための空っぽの表を作る
+            styles = pd.DataFrame('', index=data.index, columns=data.columns)
+            for col in data.columns:
+                try:
+                    wd_name = WEEKDAYS_JP[calendar.weekday(year, month, int(col.split("(")[0]))]
+                    for name in data.index:
+                        # 1. 休み希望のチェック（最新の req_load を使う）
+                        # もし req_load が True なら背景をピンクにする
+                        if name in req_load.index and req_load.at[name, col] == True:
+                            styles.at[name, col] = 'background-color: #ffd1d1; color: black;'
+                            continue # 休みなら次の人の判定へ
+
+                        # 2. 時間外チェック（赤色）
+                        val = data.at[name, col]
+                        if val and "-" in str(val):
+                            si, ei = time_to_float(val.split("-")[0]), time_to_float(val.split("-")[1])
+                            sl, el = parse_range(avail_df.at[name, wd_name] if name in avail_df.index else "10.0-23.0")
+                            if si < sl or ei > el:
+                                styles.at[name, col] = 'background-color: #ff5555; color: white;'
+                except: pass
+            return styles
+
+        st.info("💡 ピンク色は休み希望、赤色は出勤不可時間です。")
+        # style.apply を使って最新の req_load を反映させる
+        edited = st.data_editor(
+            current_df.style.apply(highlight_logic, axis=None), 
+            column_config={c: st.column_config.SelectboxColumn(options=SHIFT_OPTIONS, width="medium") for c in column_names}, 
+            use_container_width=True, 
+            height=750
+        )
+        
+        if st.button("💾 このシフトを確定保存"):
+            if save_sheet_robust(edited, SHIFT_SHEET): 
+                st.session_state[shift_key] = edited
+                st.success("保存完了しました。")
 
         with col_a2:
             output = io.BytesIO()
