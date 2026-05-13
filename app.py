@@ -147,86 +147,137 @@ elif mode == "③ 曜日別可能時間":
             for wd, t in new_times.items(): avail_df.at[target, wd] = t
             save_sheet(avail_df, "staff_availability")
 
+# --- ④ シフト案作成 ---
 else:
-    if not is_admin: st.error("管理者パスワードを入力してください")
+    if not is_admin:
+        st.error("管理者パスワードを入力してください")
     else:
         st.header(f"📝 {year}年{month}月のシフト案")
-        req_groups = load_sheet("required_staff", pd.DataFrame(2, index=[f"{h}:{m}" for h in range(10, 23) for m in ["00", "30"]] + ["23:00"], columns=["月火水木_ホール", "月火水木_キッチン", "金土_ホール", "金土_キッチン", "日_ホール", "日_キッチン"]))
 
-        with st.expander("🛠️ 必要人数設定（上下ボタン）"):
+        # ====================== 必要人数設定 (上下ボタン付き個別設定) ======================
+        with st.expander("🛠️ 必要人数設定（グループ別・時間帯個別調整）", expanded=False):
+            req_groups = load_sheet("required_staff", pd.DataFrame(2, index=time_slots, 
+                                          columns=["月火水木_ホール", "月火水木_キッチン", "金土_ホール", "金土_キッチン", "日_ホール", "日_キッチン"]))
             edited_req_groups = req_groups.copy()
-            g_tabs = st.tabs(["📅 月〜木", "🟧 金・土", "🟥 日曜"])
-            g_keys = ["月火水木", "金土", "日"]
-            for i, key in enumerate(g_keys):
-                with g_tabs[i]:
-                    for t in edited_req_groups.index:
+            groups_labels = {"月火水木": "📅 平日 (月〜木)", "金土": "🟧 週末 (金・土)", "日": "🟥 日曜日"}
+            tabs = st.tabs(list(groups_labels.values()))
+            
+            for i, (key, label) in enumerate(groups_labels.items()):
+                with tabs[i]:
+                    st.write(f"#### {label} の一括設定")
+                    c_bulk1, c_bulk2, c_bulk3 = st.columns(3)
+                    new_h = c_bulk1.number_input("ホール全員", 0, 10, 2, key=f"bulk_h_{key}")
+                    new_k = c_bulk2.number_input("キッチン全員", 0, 10, 2, key=f"bulk_k_{key}")
+                    if c_bulk3.button(f"{key} 全時間に適用", key=f"btn_{key}"):
+                        edited_req_groups[f"{key}_ホール"] = new_h
+                        edited_req_groups[f"{key}_キッチン"] = new_k
+                        save_sheet(edited_req_groups, "required_staff"); st.rerun()
+                    st.divider()
+                    st.write("#### 時間別調整")
+                    for t in time_slots:
                         cols = st.columns([1, 2, 2])
                         cols[0].write(f"**{t}**")
                         edited_req_groups.at[t, f"{key}_ホール"] = cols[1].number_input("H", 0, 10, int(edited_req_groups.at[t, f"{key}_ホール"]), key=f"nh_{key}_{t}", label_visibility="collapsed")
                         edited_req_groups.at[t, f"{key}_キッチン"] = cols[2].number_input("K", 0, 10, int(edited_req_groups.at[t, f"{key}_キッチン"]), key=f"nk_{key}_{t}", label_visibility="collapsed")
-            if st.button("💾 人数設定を保存"): save_sheet(edited_req_groups, "required_staff")
+            if st.button("💾 人数設定を保存", key="save_req_final"): save_sheet(edited_req_groups, "required_staff")
 
         st.divider()
-        r_load_raw = load_sheet(REQ_SHEET_NAME, pd.DataFrame(False, index=ALL_NAMES, columns=column_names))
-        req_load = r_load_raw.reindex(ALL_NAMES).fillna(False)
-        # 【修正】applymap を map に変更
-        req_load = req_load.map(lambda x: str(x).upper() == "TRUE" if isinstance(x, str) else bool(x))
 
+        # 休み希望データの準備（重複削除・クリーニング付き）
+        req_load_raw = load_sheet(REQ_SHEET_NAME, pd.DataFrame())
+        if req_load_raw is not None and not req_load_raw.empty:
+            req_load = req_load_raw.drop_duplicates(subset=req_load_raw.columns[0]).set_index(req_load_raw.columns[0]).reindex(ALL_NAMES).fillna(False)
+            req_load = req_load.map(lambda x: str(x).lower() in ['true', '1', 'yes'])
+        else:
+            req_load = pd.DataFrame(False, index=ALL_NAMES, columns=column_names)
+
+        # シフトデータの読み込み・キャッシュ管理
         if 'shift_cache' not in st.session_state:
-            s_raw = load_sheet(SHIFT_SHEET_NAME, pd.DataFrame("", index=ALL_NAMES, columns=column_names))
-            st.session_state.shift_cache = s_raw.reindex(ALL_NAMES).fillna("")
+            s_raw = load_sheet(SHIFT_SHEET_NAME, pd.DataFrame())
+            if s_raw is not None and not s_raw.empty:
+                st.session_state.shift_cache = s_raw.drop_duplicates(subset=s_raw.columns[0]).set_index(s_raw.columns[0]).reindex(ALL_NAMES).fillna("")
+            else:
+                st.session_state.shift_cache = pd.DataFrame("", index=ALL_NAMES, columns=column_names)
+        
         current_df = st.session_state.shift_cache
 
         col_a1, col_a2 = st.columns([2, 1])
         with col_a1:
-            if st.button("🤖 公平自動生成実行"):
+            if st.button("🤖 必要人数と公平性を考慮して自動生成実行"):
                 new_s = pd.DataFrame("", index=ALL_NAMES, columns=column_names)
                 work_counts = {n: 0 for n in ALL_NAMES}
                 target_counts = {n: (staff_info[n]['週希望'] if staff_info[n]['週希望']>0 else 1)*4.3 for n in ALL_NAMES}
-                
                 for i, col in enumerate(column_names):
                     wd_jp = WEEKDAYS_JP[calendar.weekday(year, month, i+1)]
                     g_key = "月火水木" if wd_jp in ["月","火","水","木"] else ("金土" if wd_jp in ["金","土"] else "日")
-                    
-                    # 人数設定から目標値を取得（12時と19時を代表値に）
                     try:
-                        thd = int(edited_req_groups.at["12:00", f"{g_key}_ホール"])
-                        tkd = int(edited_req_groups.at["12:00", f"{g_key}_キッチン"])
-                        thn = int(edited_req_groups.at["19:00", f"{g_key}_ホール"])
-                        tkn = int(edited_req_groups.at["19:00", f"{g_key}_キッチン"])
-                    except:
-                        thd, tkd, thn, tkn = 2, 2, 3, 2
-
+                        thd, tkd = int(edited_req_groups.at["12:00", f"{g_key}_ホール"]), int(edited_req_groups.at["12:00", f"{g_key}_キッチン"])
+                        thn, tkn = int(edited_req_groups.at["19:00", f"{g_key}_ホール"]), int(edited_req_groups.at["19:00", f"{g_key}_キッチン"])
+                    except: thd, tkd, thn, tkn = 2, 2, 3, 2
                     capable = [n for n in ALL_NAMES if not req_load.get(col, pd.Series(False)).at[n]]
-                    random.shuffle(capable)
-                    capable.sort(key=lambda n: (work_counts[n]/target_counts[n] if target_counts[n]>0 else 99, random.random()))
-
-                    # 【ここを修正！】左側5つ = 右側5つ に合わせました
+                    random.shuffle(capable); capable.sort(key=lambda n: (work_counts[n]/target_counts[n] if target_counts[n]>0 else 99, random.random()))
                     h_d, k_d, h_n, k_n, has_cl = 0, 0, 0, 0, False
-                    
                     for n in capable:
-                        sf, ef = parse_range(avail_df.at[n, wd_jp] if n in avail_df.index else "10.0-23.0")
+                        raw_avail = avail_df.at[n, wd_jp] if n in avail_df.index else "10.0-23.0"
+                        sf, ef = parse_range(raw_avail)
                         if sf >= ef: continue
                         tst = f"{int(sf)}:00" if sf%1==0 else f"{int(sf)}:30"
                         role = staff_info[n]['職種']
-
-                        # 1. 夜のレジ締め優先（ホールから）
                         if staff_info[n]['レジ締め'] and ef >= 23 and not has_cl:
                             new_s.at[n, col] = f"{tst}-23:00"; work_counts[n]+=1; h_n+=1; has_cl=True
-                        
-                        # 2. 昼枠（18時まで入れる人）
                         elif sf <= 11 and ef >= 18:
-                            if ("☕" in role or "👔" in role) and h_d < thd:
-                                new_s.at[n, col] = f"{tst}-18:00"; work_counts[n]+=1; h_d+=1
-                            elif ("🍳" in role or "👔" in role) and k_d < tkd:
-                                new_s.at[n, col] = f"{tst}-18:00"; work_counts[n]+=1; k_d+=1
-                        
-                        # 3. 夜枠（23時まで入れる人）
+                            if ("☕" in role or "👔" in role) and h_d < thd: new_s.at[n, col] = f"{tst}-18:00"; work_counts[n]+=1; h_d+=1
+                            elif ("🍳" in role or "👔" in role) and k_d < tkd: new_s.at[n, col] = f"{tst}-18:00"; work_counts[n]+=1; k_d+=1
                         elif ef >= 23:
-                            if ("☕" in role or "👔" in role) and h_n < thn:
-                                new_s.at[n, col] = f"{tst}-23:00"; work_counts[n]+=1; h_n+=1
-                            elif ("🍳" in role or "👔" in role) and k_n < tkn:
-                                new_s.at[n, col] = f"{tst}-23:00"; work_counts[n]+=1; k_n+=1
-                
-                st.session_state.shift_cache = new_s
-                st.rerun()
+                            if ("☕" in role or "👔" in role) and h_n < thn: new_s.at[n, col] = f"{tst}-23:00"; work_counts[n]+=1; h_n+=1
+                            elif ("🍳" in role or "👔" in role) and k_n < tkn: new_s.at[n, col] = f"{tst}-23:00"; work_counts[n]+=1; k_n+=1
+                st.session_state.shift_cache = new_s; st.rerun()
+
+        with col_a2:
+            # --- 見やすいExcel出力機能 ---
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                current_df.to_excel(writer, sheet_name='シフト表')
+                wb, ws = writer.book, writer.sheets['シフト表']
+                base_fmt = wb.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
+                name_fmt = wb.add_format({'bold': True, 'border': 1, 'align': 'left', 'bg_color': '#F2F2F2'})
+                header_fmt = wb.add_format({'bold': True, 'border': 1, 'align': 'center', 'bg_color': '#D9D9D9'})
+                sat_fmt = wb.add_format({'bold': True, 'border': 1, 'align': 'center', 'bg_color': '#CCE5FF', 'font_color': '#0000FF'})
+                sun_fmt = wb.add_format({'bold': True, 'border': 1, 'align': 'center', 'bg_color': '#FFCCCC', 'font_color': '#FF0000'})
+                ws.set_column(0, 0, 25, name_fmt)
+                ws.set_column(1, len(column_names), 12, base_fmt)
+                for col_num, value in enumerate(current_df.columns):
+                    if "(土)" in value: ws.write(0, col_num + 1, value, sat_fmt)
+                    elif "(日)" in value: ws.write(0, col_num + 1, value, sun_fmt)
+                    else: ws.write(0, col_num + 1, value, header_fmt)
+                ws.freeze_panes(1, 1)
+            st.download_button(label="📥 見やすいExcelで保存", data=output.getvalue(), file_name=f"shift_{year}_{month:02}.xlsx")
+
+        # ==================== シフト表の表示 (色付け・直接編集) ====================
+        def highlight_logic(data):
+            styles = pd.DataFrame('', index=data.index, columns=data.columns)
+            for col in data.columns:
+                try:
+                    wd = WEEKDAYS_JP[calendar.weekday(year, month, int(col.split("(")[0]))]
+                    for name in data.index:
+                        # 1. 休み希望チェック（ピンク）
+                        if name in req_load.index and req_load.at[name, col]:
+                            styles.at[name, col] = 'background-color: #ffd1d1;'
+                            continue
+                        # 2. 時間外チェック（赤）
+                        val = data.at[name, col]
+                        if val and "-" in str(val):
+                            si, ei = time_to_float(val.split("-")[0]), time_to_float(val.split("-")[1])
+                            sl, el = parse_range(avail_df.at[name, wd] if name in avail_df.index else "10.0-23.0")
+                            if si < sl or ei > el: styles.at[name, col] = 'background-color: #ff5555; color: white;'
+                except: pass
+            return styles
+
+        st.info("💡 薄ピンク: 休み希望 | 赤: 可能時間外")
+        config = {c: st.column_config.SelectboxColumn(options=SHIFT_OPTIONS, width="medium") for c in column_names}
+        edited = st.data_editor(current_df.style.apply(highlight_logic, axis=None), column_config=config, use_container_width=True, height=750)
+        
+        if st.button("💾 このシフトをスプレッドシートに保存"):
+            if save_sheet(edited, SHIFT_SHEET_NAME):
+                st.session_state.shift_cache = pd.DataFrame(edited)
+                st.success("正常に保存されました")
