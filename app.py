@@ -181,65 +181,52 @@ else:
         with col_a1:
             if st.button("🤖 公平自動生成実行"):
                 new_s = pd.DataFrame("", index=ALL_NAMES, columns=column_names)
-                work_counts = {n: 0 for n in ALL_NAMES}; target_counts = {n: (staff_info[n]['週希望'] if staff_info[n]['週希望']>0 else 1)*4.3 for n in ALL_NAMES}
+                work_counts = {n: 0 for n in ALL_NAMES}
+                target_counts = {n: (staff_info[n]['週希望'] if staff_info[n]['週希望']>0 else 1)*4.3 for n in ALL_NAMES}
+                
                 for i, col in enumerate(column_names):
                     wd_jp = WEEKDAYS_JP[calendar.weekday(year, month, i+1)]
                     g_key = "月火水木" if wd_jp in ["月","火","水","木"] else ("金土" if wd_jp in ["金","土"] else "日")
-                    thd, tkd = int(edited_req_groups.at["12:00", f"{g_key}_ホール"]), int(edited_req_groups.at["12:00", f"{g_key}_キッチン"])
-                    thn, tkn = int(edited_req_groups.at["19:00", f"{g_key}_ホール"]), int(edited_req_groups.at["19:00", f"{g_key}_キッチン"])
-                    capable = [n for n in ALL_NAMES if not req_load.at[n, col]]
-                    random.shuffle(capable); capable.sort(key=lambda n: (work_counts[n]/target_counts[n] if target_counts[n]>0 else 99, random.random()))
-                    h_cnt, k_cnt, has_cl = 0, 0, 0, 0, False
+                    
+                    # 人数設定から目標値を取得（12時と19時を代表値に）
+                    try:
+                        thd = int(edited_req_groups.at["12:00", f"{g_key}_ホール"])
+                        tkd = int(edited_req_groups.at["12:00", f"{g_key}_キッチン"])
+                        thn = int(edited_req_groups.at["19:00", f"{g_key}_ホール"])
+                        tkn = int(edited_req_groups.at["19:00", f"{g_key}_キッチン"])
+                    except:
+                        thd, tkd, thn, tkn = 2, 2, 3, 2
+
+                    capable = [n for n in ALL_NAMES if not req_load.get(col, pd.Series(False)).at[n]]
+                    random.shuffle(capable)
+                    capable.sort(key=lambda n: (work_counts[n]/target_counts[n] if target_counts[n]>0 else 99, random.random()))
+
+                    # 【ここを修正！】左側5つ = 右側5つ に合わせました
+                    h_d, k_d, h_n, k_n, has_cl = 0, 0, 0, 0, False
+                    
                     for n in capable:
-                        sf, ef = parse_range(avail_df.at[n, wd_jp]); role = staff_info[n]['職種']
+                        sf, ef = parse_range(avail_df.at[n, wd_jp] if n in avail_df.index else "10.0-23.0")
                         if sf >= ef: continue
                         tst = f"{int(sf)}:00" if sf%1==0 else f"{int(sf)}:30"
+                        role = staff_info[n]['職種']
+
+                        # 1. 夜のレジ締め優先（ホールから）
                         if staff_info[n]['レジ締め'] and ef >= 23 and not has_cl:
-                            new_s.at[n, col] = f"{tst}-23:00"; work_counts[n]+=1; h_cnt+=1; has_cl=True
+                            new_s.at[n, col] = f"{tst}-23:00"; work_counts[n]+=1; h_n+=1; has_cl=True
+                        
+                        # 2. 昼枠（18時まで入れる人）
                         elif sf <= 11 and ef >= 18:
-                            if ("☕" in role or "👔" in role) and h_cnt < thd: new_s.at[n, col] = f"{tst}-18:00"; work_counts[n]+=1; h_cnt+=1
-                            elif ("🍳" in role or "👔" in role) and k_cnt < tkd: new_s.at[n, col] = f"{tst}-18:00"; work_counts[n]+=1; k_cnt+=1
+                            if ("☕" in role or "👔" in role) and h_d < thd:
+                                new_s.at[n, col] = f"{tst}-18:00"; work_counts[n]+=1; h_d+=1
+                            elif ("🍳" in role or "👔" in role) and k_d < tkd:
+                                new_s.at[n, col] = f"{tst}-18:00"; work_counts[n]+=1; k_d+=1
+                        
+                        # 3. 夜枠（23時まで入れる人）
                         elif ef >= 23:
-                            if ("☕" in role or "👔" in role) and h_cnt < thn: new_s.at[n, col] = f"{tst}-23:00"; work_counts[n]+=1; h_cnt+=1
-                            elif ("🍳" in role or "👔" in role) and k_cnt < tkn: new_s.at[n, col] = f"{tst}-23:00"; work_counts[n]+=1; k_cnt+=1
-                st.session_state.shift_cache = new_s; st.rerun()
-
-        with col_a2:
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                current_df.to_excel(writer, sheet_name='シフト')
-                wb, ws = writer.book, writer.sheets['シフト']
-                ws.set_column(0,0,25); ws.set_column(1,len(column_names),12)
-            st.download_button("📥 Excel保存", output.getvalue(), f"shift_{year}_{month:02}.xlsx")
-
-        def highlight_logic(data):
-            styles = pd.DataFrame('', index=data.index, columns=data.columns)
-            for col in data.columns:
-                try:
-                    wd = WEEKDAYS_JP[calendar.weekday(year, month, int(col.split("(")[0]))]
-                    for name in data.index:
-                        if name in req_load.index and req_load.at[name, col]:
-                            styles.at[name, col] = 'background-color: #ffd1d1;'
-                        val = data.at[name, col]
-                        if val and "-" in str(val):
-                            si, ei = time_to_float(val.split("-")[0]), time_to_float(val.split("-")[1])
-                            sl, el = parse_range(avail_df.at[name, wd] if name in avail_df.index else "10.0-23.0")
-                            if si < sl or ei > el: styles.at[name, col] = 'background-color: #ff5555; color: white;'
-                except: pass
-            return styles
-
-        edited = st.data_editor(current_df.style.apply(highlight_logic, axis=None), column_config={c: st.column_config.SelectboxColumn(options=SHIFT_OPTIONS, width="medium") for c in column_names}, use_container_width=True, height=750)
-        if st.button("💾 確定保存"):
-            if save_sheet(edited, SHIFT_SHEET_NAME): st.session_state.shift_cache = edited; st.success("保存完了")
-
-# 月移動
-st.sidebar.divider()
-c1, c2 = st.sidebar.columns(2)
-if c1.button("◀ 前月"): 
-    st.session_state.view_date = (st.session_state.view_date - timedelta(days=28)).replace(day=1)
-    if 'shift_cache' in st.session_state: del st.session_state.shift_cache
-    st.rerun()
-if c2.button("次月 ▶"): 
-    st.session_state.view_date = (st.session_state.view_date + timedelta(days=32)).replace(day=1)
-    if 'shift_cache' in st.session_state: del st.session_state.shift_cache
-    st.rerun()
+                            if ("☕" in role or "👔" in role) and h_n < thn:
+                                new_s.at[n, col] = f"{tst}-23:00"; work_counts[n]+=1; h_n+=1
+                            elif ("🍳" in role or "👔" in role) and k_n < tkn:
+                                new_s.at[n, col] = f"{tst}-23:00"; work_counts[n]+=1; k_n+=1
+                
+                st.session_state.shift_cache = new_s
+                st.rerun()
