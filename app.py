@@ -179,21 +179,39 @@ elif mode == MENU_SHIFT:
         with col_a1:
             if st.button("🤖 公平自動生成実行"):
                 new_s = pd.DataFrame("", index=ALL_NAMES, columns=column_names)
-                work_counts = {n: 0 for n in ALL_NAMES}; target_counts = {n: (staff_info[n]['週希望'] if staff_info[n]['週希望']>0 else 1)*4.3 for n in ALL_NAMES}
+                work_counts = {n: 0 for n in ALL_NAMES}
+                target_counts = {n: (staff_info[n]['週希望'] if staff_info[n]['週希望']>0 else 1)*4.3 for n in ALL_NAMES}
+                
+                # 【重要】休み希望を再読み込みし、確実にTrue/Falseに変換
+                r_raw = load_sheet_cached(REQ_SHEET, pd.DataFrame(False, index=ALL_NAMES, columns=column_names))
+                req_checker = r_raw.reindex(ALL_NAMES).fillna(False)
+                # 全てのセルの文字を大文字にして "TRUE" かどうかで判定する（これで確実になります）
+                req_checker = req_checker.map(lambda x: str(x).upper() == "TRUE")
+
                 for i, col in enumerate(column_names):
                     wd_jp = WEEKDAYS_JP[calendar.weekday(year, month, i+1)]
                     g_key = "月火水木" if wd_jp in ["月","火","水","木"] else ("金土" if wd_jp in ["金","土"] else "日")
-                    thd, tkd = int(curr_req.at["12:00", f"{g_key}_ホール"]), int(curr_req.at["12:00", f"{g_key}_キッチン"])
-                    thn, tkn = int(curr_req.at["19:00", f"{g_key}_ホール"]), int(curr_req.at["19:00", f"{g_key}_キッチン"])
                     
-                    capable = [n for n in ALL_NAMES if not req_load.at[n, col]]
-                    random.shuffle(capable); capable.sort(key=lambda n: (work_counts[n]/target_counts[n] if target_counts[n]>0 else 99, random.random()))
+                    try:
+                        thd = int(curr_req.at["12:00", f"{g_key}_ホール"])
+                        tkd = int(curr_req.at["12:00", f"{g_key}_キッチン"])
+                        thn = int(curr_req.at["19:00", f"{g_key}_ホール"])
+                        tkn = int(curr_req.at["19:00", f"{g_key}_キッチン"])
+                    except: thd, tkd, thn, tkn = 2, 2, 3, 2
+                    
+                    # 【ここが修正ポイント】休み希望(True)の人は絶対に除外する
+                    capable = [n for n in ALL_NAMES if req_checker.at[n, col] == False]
+                    
+                    random.shuffle(capable)
+                    capable.sort(key=lambda n: (work_counts[n]/target_counts[n], random.random()))
+                    
                     hd_c, kd_c, hn_c, kn_c, has_cl = 0, 0, 0, 0, False
                     for n in capable:
                         sf, ef = parse_range(avail_df.at[n, wd_jp] if n in avail_df.index else "10.0-23.0")
                         if sf >= ef: continue
                         tst = f"{int(sf)}:00" if sf%1==0 else f"{int(sf)}:30"
                         role = staff_info[n]['職種']
+
                         if staff_info[n]['レジ締め'] and ef >= 23 and not has_cl:
                             new_s.at[n, col] = f"{tst}-23:00"; work_counts[n]+=1; hn_c+=1; has_cl=True
                         elif sf <= 11 and ef >= 18:
@@ -202,7 +220,9 @@ elif mode == MENU_SHIFT:
                         elif ef >= 23:
                             if ("☕" in role or "👔" in role) and hn_c < thn: new_s.at[n, col] = f"{tst}-23:00"; work_counts[n]+=1; hn_c+=1
                             elif ("🍳" in role or "👔" in role) and kn_c < tkn: new_s.at[n, col] = f"{tst}-23:00"; work_counts[n]+=1; kn_c+=1
-                st.session_state[shift_key] = new_s; st.rerun()
+                
+                st.session_state[shift_key] = new_s
+                st.rerun()
 
         with col_a2:
             output = io.BytesIO()
