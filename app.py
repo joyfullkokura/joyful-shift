@@ -163,7 +163,6 @@ elif mode == MENU_SHIFT:
             if st.button("💾 人数設定を保存"): save_sheet_robust(curr_req, "required_staff")
 
         st.divider()
-        # 休み希望読み込み
         # --- ④ シフト作成 の冒頭をこれに差し替え ---
 else:
     if not is_admin:
@@ -186,7 +185,6 @@ else:
             req_load = pd.DataFrame(False, index=ALL_NAMES, columns=column_names)
 
         # (この下の人数設定や自動生成ボタンのロジックへ続く...)
-        req_load = r_load_raw.reindex(ALL_NAMES).fillna(False).map(lambda x: str(x).lower() in ['true', '1', 'yes'])
 
         # シフトデータ保持
         shift_key = f"shift_cache_{year}_{month}"
