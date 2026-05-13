@@ -17,7 +17,6 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 def load_sheet(worksheet_name, default_df):
     """キャッシュを一切使わずにスプレッドシートを読み込む"""
     try:
-        # ttl=0 を指定して常に最新データを取得
         df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=worksheet_name, ttl=0)
         if df is not None and not df.empty:
             df = df.dropna(how='all', axis=0)
@@ -38,8 +37,8 @@ def save_sheet(df, worksheet_name):
         save_df.index.name = "名前"
         save_df = save_df.reset_index()
         conn.update(spreadsheet=SPREADSHEET_URL, worksheet=worksheet_name, data=save_df)
-        st.cache_data.clear() # アプリ全体のキャッシュを掃除
-        time.sleep(1) # 反映待ち
+        st.cache_data.clear() 
+        time.sleep(1)
         return True
     except Exception as e:
         st.error(f"保存エラー: {e}")
@@ -112,22 +111,21 @@ SHIFT_SHEET_NAME = f"shift_{year}_{month:02}"
 
 # --- 5. UI ---
 st.sidebar.title("ジョイフル シフトWeb")
-pw = st.sidebar.text_input("管理者パスワード", type="password")
+pw = st.sidebar.text_input("パスワード", type="password")
 is_admin = (pw == "1234")
 mode = st.sidebar.radio("モード選択", ["① 休み希望入力", "② 従業員基本設定", "③ 曜日別可能時間", "④ シフト案作成"])
 
 if mode == "① 休み希望入力":
     st.header(f"📅 {year}年{month}月の休み希望")
-    # 常に最新を読み込む
     r_raw = load_sheet(REQ_SHEET_NAME, pd.DataFrame(False, index=ALL_NAMES, columns=column_names))
     req_df = r_raw.reindex(ALL_NAMES).fillna(False)
-    # 文字列の 'TRUE' を確実に True(Boolean) に変換する処理を追加
-    req_df = req_df.applymap(lambda x: str(x).upper() == "TRUE" if isinstance(x, str) else bool(x))
+    # 【修正】applymap を map に変更
+    req_df = req_df.map(lambda x: str(x).upper() == "TRUE" if isinstance(x, str) else bool(x))
     
     edited = st.data_editor(req_df, use_container_width=True, height=750)
     if st.button("💾 希望を保存"):
         if save_sheet(edited, REQ_SHEET_NAME):
-            st.success("保存完了！ブラウザを閉じても保持されます。")
+            st.success("保存完了！")
 
 elif mode == "② 従業員基本設定":
     if not is_admin: st.error("管理者専用")
@@ -153,8 +151,6 @@ else:
     if not is_admin: st.error("管理者パスワードを入力してください")
     else:
         st.header(f"📝 {year}年{month}月のシフト案")
-        
-        # 人数設定の読み込み
         req_groups = load_sheet("required_staff", pd.DataFrame(2, index=[f"{h}:{m}" for h in range(10, 23) for m in ["00", "30"]] + ["23:00"], columns=["月火水木_ホール", "月火水木_キッチン", "金土_ホール", "金土_キッチン", "日_ホール", "日_キッチン"]))
 
         with st.expander("🛠️ 必要人数設定（上下ボタン）"):
@@ -171,17 +167,14 @@ else:
             if st.button("💾 人数設定を保存"): save_sheet(edited_req_groups, "required_staff")
 
         st.divider()
-
-        # 休み希望の最新読み込みと Boolean 変換
         r_load_raw = load_sheet(REQ_SHEET_NAME, pd.DataFrame(False, index=ALL_NAMES, columns=column_names))
         req_load = r_load_raw.reindex(ALL_NAMES).fillna(False)
-        req_load = req_load.applymap(lambda x: str(x).upper() == "TRUE" if isinstance(x, str) else bool(x))
+        # 【修正】applymap を map に変更
+        req_load = req_load.map(lambda x: str(x).upper() == "TRUE" if isinstance(x, str) else bool(x))
 
-        # シフトキャッシュ管理
         if 'shift_cache' not in st.session_state:
             s_raw = load_sheet(SHIFT_SHEET_NAME, pd.DataFrame("", index=ALL_NAMES, columns=column_names))
             st.session_state.shift_cache = s_raw.reindex(ALL_NAMES).fillna("")
-        
         current_df = st.session_state.shift_cache
 
         col_a1, col_a2 = st.columns([2, 1])
@@ -196,19 +189,19 @@ else:
                     thn, tkn = int(edited_req_groups.at["19:00", f"{g_key}_ホール"]), int(edited_req_groups.at["19:00", f"{g_key}_キッチン"])
                     capable = [n for n in ALL_NAMES if not req_load.at[n, col]]
                     random.shuffle(capable); capable.sort(key=lambda n: (work_counts[n]/target_counts[n] if target_counts[n]>0 else 99, random.random()))
-                    h_d, k_d, h_n, k_n, has_cl = 0, 0, 0, 0, False
+                    h_cnt, k_cnt, has_cl = 0, 0, 0, 0, False
                     for n in capable:
                         sf, ef = parse_range(avail_df.at[n, wd_jp]); role = staff_info[n]['職種']
                         if sf >= ef: continue
                         tst = f"{int(sf)}:00" if sf%1==0 else f"{int(sf)}:30"
                         if staff_info[n]['レジ締め'] and ef >= 23 and not has_cl:
-                            new_s.at[n, col] = f"{tst}-23:00"; work_counts[n]+=1; h_n+=1; has_cl=True
+                            new_s.at[n, col] = f"{tst}-23:00"; work_counts[n]+=1; h_cnt+=1; has_cl=True
                         elif sf <= 11 and ef >= 18:
-                            if ("☕" in role or "👔" in role) and h_d < thd: new_s.at[n, col] = f"{tst}-18:00"; work_counts[n]+=1; h_d+=1
-                            elif ("🍳" in role or "👔" in role) and k_d < tkd: new_s.at[n, col] = f"{tst}-18:00"; work_counts[n]+=1; k_d+=1
+                            if ("☕" in role or "👔" in role) and h_cnt < thd: new_s.at[n, col] = f"{tst}-18:00"; work_counts[n]+=1; h_cnt+=1
+                            elif ("🍳" in role or "👔" in role) and k_cnt < tkd: new_s.at[n, col] = f"{tst}-18:00"; work_counts[n]+=1; k_cnt+=1
                         elif ef >= 23:
-                            if ("☕" in role or "👔" in role) and h_n < thn: new_s.at[n, col] = f"{tst}-23:00"; work_counts[n]+=1; h_n+=1
-                            elif ("🍳" in role or "👔" in role) and k_n < tkn: new_s.at[n, col] = f"{tst}-23:00"; work_counts[n]+=1; k_n+=1
+                            if ("☕" in role or "👔" in role) and h_cnt < thn: new_s.at[n, col] = f"{tst}-23:00"; work_counts[n]+=1; h_cnt+=1
+                            elif ("🍳" in role or "👔" in role) and k_cnt < tkn: new_s.at[n, col] = f"{tst}-23:00"; work_counts[n]+=1; k_cnt+=1
                 st.session_state.shift_cache = new_s; st.rerun()
 
         with col_a2:
@@ -216,14 +209,8 @@ else:
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 current_df.to_excel(writer, sheet_name='シフト')
                 wb, ws = writer.book, writer.sheets['シフト']
-                fmt = wb.add_format({'border':1, 'align':'center'})
-                name_fmt = wb.add_format({'bold':True, 'border':1, 'bg_color':'#F2F2F2'})
-                ws.set_column(0,0,25,name_fmt); ws.set_column(1,len(column_names),12,fmt)
-                for c_idx, val in enumerate(current_df.columns):
-                    if "(土)" in val: ws.write(0, c_idx + 1, val, wb.add_format({'bold':True, 'bg_color':'#CCE5FF', 'font_color':'#0000FF', 'border':1}))
-                    elif "(日)" in val: ws.write(0, c_idx + 1, val, wb.add_format({'bold':True, 'bg_color':'#FFCCCC', 'font_color':'#FF0000', 'border':1}))
-                ws.freeze_panes(1, 1)
-            st.download_button("📥 見やすいExcel保存", output.getvalue(), f"shift_{year}_{month:02}.xlsx")
+                ws.set_column(0,0,25); ws.set_column(1,len(column_names),12)
+            st.download_button("📥 Excel保存", output.getvalue(), f"shift_{year}_{month:02}.xlsx")
 
         def highlight_logic(data):
             styles = pd.DataFrame('', index=data.index, columns=data.columns)
@@ -231,7 +218,6 @@ else:
                 try:
                     wd = WEEKDAYS_JP[calendar.weekday(year, month, int(col.split("(")[0]))]
                     for name in data.index:
-                        # ここで確実に req_load と照合
                         if name in req_load.index and req_load.at[name, col]:
                             styles.at[name, col] = 'background-color: #ffd1d1;'
                         val = data.at[name, col]
