@@ -9,41 +9,37 @@ from streamlit_gsheets import GSheetsConnection
 
 st.set_page_config(page_title="ジョイフル シフト管理PRO", layout="wide")
 
-# --- 1. 接続設定 ---
+# --- 1. 定数設定（一番最初に定義してエラーを防ぐ） ---
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1dDyKAXYsHZg1ta4l7te84uSbhSea-FoyVgTeo4-kgkI/edit?gid=0#gid=0"
+WEEKDAYS_JP = ["月", "火", "水", "木", "金", "土", "日"]
+TIME_SLOTS = [f"{h}:{m}" for h in range(10, 23) for m in ["00", "30"]] + ["23:00"]
+SHIFT_OPTIONS = ["", "10:00-18:00", "18:00-23:00", "10:00-23:00", "10:00-15:00", "11:00-18:00", "17:00-23:00", "18:30-23:00", "19:00-23:00"]
+
+# --- 2. 補助関数 ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-def load_sheet_cached(worksheet_name, default_df, ttl_sec=10):
+def load_data(sheet_name, default_df):
     try:
-        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=worksheet_name, ttl=ttl_sec)
+        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, ttl=0)
         if df is not None and not df.empty:
             df = df.dropna(how='all', axis=0)
-            df = df.drop_duplicates(subset=df.columns[0], keep='first')
-            df = df.set_index(df.columns[0])
+            df = df.drop_duplicates(subset=df.columns[0]).set_index(df.columns[0])
             df.index = df.index.astype(str).str.strip()
             return df
         return default_df
-    except Exception:
-        return default_df
+    except: return default_df
 
-def save_sheet_robust(df, worksheet_name):
+def save_data(df, sheet_name):
     try:
-        if hasattr(df, 'data'): df = df.data 
+        if hasattr(df, 'data'): df = df.data
         save_df = df.copy()
         save_df.index.name = "名前"
-        save_df = save_df.reset_index()
-        conn.update(spreadsheet=SPREADSHEET_URL, worksheet=worksheet_name, data=save_df)
+        conn.update(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, data=save_df.reset_index())
         st.cache_data.clear()
-        time.sleep(1)
         return True
     except Exception as e:
         st.error(f"保存失敗: {e}")
         return False
-
-# --- 2. 補助関数 ---
-WEEKDAYS_JP = ["月", "火", "水", "木", "金", "土", "日"]
-TIME_SLOTS = [f"{h}:{m}" for h in range(10, 23) for m in ["00", "30"]] + ["23:00"]
-SHIFT_OPTIONS = ["", "10:00-18:00", "18:00-23:00", "10:00-23:00", "10:00-15:00", "11:00-18:00", "17:00-23:00", "18:30-23:00", "19:00-23:00"]
 
 def time_to_float(t_str):
     try:
@@ -57,7 +53,6 @@ def parse_range(r_str):
         return float(parts[0]), float(parts[1])
     except: return 10.0, 23.0
 
-# --- 3. 名簿・初期化 ---
 def get_initial_staff():
     return [
         {"名前": "多田（店長）", "職種": "👔社員", "レジ締め": True, "週希望": 5},
@@ -251,13 +246,14 @@ else:
             if save_sheet_robust(edited, SHIFT_SHEET):
                 st.session_state[shift_key] = edited
                 st.success("保存完了")
-
-# --- 月移動 ---
+# 月移動（サイドバー）
 st.sidebar.divider()
 c1, c2 = st.sidebar.columns(2)
-if c1.button("◀ 前月"):
+if c1.button("◀ 前月"): 
     st.session_state.view_date = (st.session_state.view_date - timedelta(days=28)).replace(day=1)
+    if 'shift_cache' in st.session_state: del st.session_state.shift_cache
     st.rerun()
-if c2.button("次月 ▶"):
+if c2.button("次月 ▶"): 
     st.session_state.view_date = (st.session_state.view_date + timedelta(days=32)).replace(day=1)
+    if 'shift_cache' in st.session_state: del st.session_state.shift_cache
     st.rerun()
