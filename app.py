@@ -127,6 +127,7 @@ elif mode == "休み希望入力":
         else:
             # 名簿と同期して貯金箱に入れる
             df = raw_data.set_index('名前').reindex(ALL_NAMES).reset_index().fillna(False)
+            df = df.map(lambda x: str(x).upper() == "TRUE" if isinstance(x, str) else bool(x))
             st.session_state.temp_req_df = df
 
     st.info("💡 作業中は自動保存されません。最後に必ず下の『確定保存』を押してください。")
