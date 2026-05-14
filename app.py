@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from streamlit_gsheets import GSheetsConnection
 
-st.set_page_config(page_title="ジョイフル シフト管理（名簿管理）", layout="wide")
+st.set_page_config(page_title="ジョイフル シフト管理", layout="wide")
 
 # --- 1. スプレッドシート接続設定 ---
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1dDyKAXYsHZg1ta4l7te84uSbhSea-FoyVgTeo4-kgkI/edit?gid=0#gid=0"
@@ -22,6 +22,8 @@ def load_master():
     
     try:
         df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="staff_master", ttl=0)
+        df['レジ締め'] = df['レジ締め'].astype(bool)
+        df['デザート'] = df['デザート'].astype(bool)
         if df is not None and not df.empty:
             df = df.dropna(how='all')
             # 読み込んだデータの種類を正しく変換する
