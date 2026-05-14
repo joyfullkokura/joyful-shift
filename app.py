@@ -45,16 +45,19 @@ def save_master(df):
     return False
 
 # --- 3. メイン画面 ---
-st.title("👥 従業員名簿・グループ管理")
+st.title(" 従業員名簿・グループ管理")
 st.info("💡 下の表に名前を打ち込んで『保存』してください。")
+st.sidebar.title("メニュー")
+mode = st.sidebar.radio("機能を選択", ["従業員名簿管理", "シフト自動生成（案）"])
+
 
 pw = st.sidebar.text_input("管理者パスワード", type="password")
 
 # データのロード
 master_df = load_master()
-
-if pw == "1234":
-    st.caption("グループ：【HD:ホール昼, HN:ホール夜, KD:キッチン昼, KN:キッチン夜, W:共通】")
+if mode == "従業員名簿管理":
+    if pw == "1234":
+     st.caption("グループ：【HD:ホール昼, HN:ホール夜, KD:キッチン昼, KN:キッチン夜, W:共通】")
     
     # 型エラーを防ぐためのエディタ設定
     edited_df = st.data_editor(
@@ -76,8 +79,40 @@ if pw == "1234":
         if save_master(edited_df):
             st.success("スプレッドシートに保存しました！")
             st.rerun()
-else:
-    st.warning("左側のメニューでパスワード『1234』を入力してください。")
+    else:
+     st.warning("左側のメニューでパスワード『1234』を入力してください。")
     if not master_df.empty:
         st.write("### 現在の名簿（閲覧のみ）")
         st.dataframe(master_df, use_container_width=True)
+else:
+    # --- ここに新しい「シフト作成」のプログラムを書いていく ---
+    st.title("📅 シフト自動生成（案）")
+    
+    # 段階的ステップ1: ジョイフルの「必要枠（スロット）」を定義する
+    st.subheader("1. 本日の必要人数（スロット）の確認")
+    
+    # ホール夜(HN)の枠を定義
+    hall_night_slots = [
+        "18:00-23:00", # 1人目
+        "18:00-23:00", # 2人目
+        "18:00-22:00", # 3人目
+        "19:00-23:00"  # 4人目
+    ]
+    
+    # キッチン夜(KN)の枠を定義
+    kitchen_night_slots = [
+        "18:00-23:00",
+        "18:00-23:00",
+        "18:00-22:00",
+        "19:00-23:00"
+    ]
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write("🏃 ホール必要枠")
+        st.write(hall_night_slots)
+    with col2:
+        st.write("🍳 キッチン必要枠")
+        st.write(kitchen_night_slots)
+
+    st.info("次のステップで、各グループ（HN, KN, W）から人をランダムに選んでこの枠に当てはめます。")
