@@ -125,6 +125,8 @@ elif mode == "休み希望入力":
             df["名前"] = ALL_NAMES
             st.session_state.temp_req_df = df
         else:
+            # 1. 最初の列（名前）をインデックスに設定して、重複を消す
+            df = raw_data.drop_duplicates(subset=raw_data.columns[0]).set_index(raw_data.columns[0])
             # 名簿と同期して貯金箱に入れる
             df = raw_data.set_index('名前').reindex(ALL_NAMES).reset_index().fillna(False)
             df = df.map(lambda x: str(x).upper() == "TRUE" if isinstance(x, str) else bool(x))
