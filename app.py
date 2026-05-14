@@ -36,16 +36,13 @@ def load_master():
     except:
         return empty_df
 # データを読み込むための「道具（関数）」
-def load_sheet_cached(worksheet_name, default_df):
+@st.cache_data(ttl=600)
+def load_sheet_cached(worksheet_name):
     try:
-        # スプレッドシートからデータを読み込む
-        # ttl=0 は「記憶せず常に最新を取る」という意味
-        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=worksheet_name, ttl=0)
-        if df is not None and not df.empty:
-            return df.dropna(how='all') # 完全に空の行は捨てる
-        return default_df
+        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=worksheet_name)
+        return df
     except:
-        return default_df # 失敗したら「空の表」を返す
+        return pd.DataFrame()
 
 # データを保存するための「道具（関数）」
 def save_sheet_robust(df, worksheet_name):
@@ -114,44 +111,48 @@ if mode == "従業員名簿管理":
             # --- ① 休み希望入力 ---
 if mode == "休み希望入力":
     st.title("📅 休み希望の登録")
-    
-    # 1. 休み希望データをスプレッドシートから読み込む
-    # まだデータがない（初回）の場合は、名前列だけの空の表を作る
-    req_df_raw = load_sheet_cached("rest_requests", pd.DataFrame())
-    # 今月の日付（1日〜31日）を列の名前にする
+
+    # 1. 貯金箱（session_state）にデータが入っているか確認
+    # 入っていなければ、スプレッドシートから初回読み込みを行う
+    if "temp_req_df" not in st.session_state:
+        raw_data = load_sheet_cached("rest_requests")
+        days_cols = [f"{d}日" for d in range(1, 32)]
+        
+        if raw_data.empty:
+            df = pd.DataFrame(False, index=range(len(ALL_NAMES)), columns=["名前"] + days_cols)
+            df["名前"] = ALL_NAMES
+            st.session_state.temp_req_df = df
+        else:
+            # 名簿と同期して貯金箱に入れる
+            df = raw_data.set_index('名前').reindex(ALL_NAMES).reset_index().fillna(False)
+            st.session_state.temp_req_df = df
+
+    st.info("💡 作業中は自動保存されません。最後に必ず下の『確定保存』を押してください。")
+
+    # 2. 画面に表示（貯金箱の中身を編集する）
+    # 日付列の設定
     days_cols = [f"{d}日" for d in range(1, 32)]
-    
-    if req_df_raw.empty:
-        # 初めて作る場合：名簿の全員分、全ての日にチェックがない(False)表を作成
-        req_df = pd.DataFrame(False, index=range(len(ALL_NAMES)), columns=["名前"] + days_cols)
-        req_df["名前"] = ALL_NAMES
-    else:
-        # すでにデータがある場合：名簿と同期させる（新人がいれば追加、辞めた人がいれば削除）
-        # 名前を基準に、今の名簿(ALL_NAMES)に合わせて行を整える
-        req_df = req_df_raw.set_index('名前').reindex(ALL_NAMES).reset_index().fillna(False)
-
-    st.info("💡 自分の名前の行を探して、休みたい日にチェックを入れて『保存』してください。")
-
-    # 2. 編集エディタを表示
-    # 全ての日付列を「チェックボックス」として設定
-    column_config = {"名前": st.column_config.TextColumn("名前", width="medium", disabled=True)}
+    column_config = {"名前": st.column_config.TextColumn("名前", disabled=True)}
     for col in days_cols:
         column_config[col] = st.column_config.CheckboxColumn(col, width="small")
 
-    edited_req = st.data_editor(
-        req_df,
+    # edited_df は「今画面で見ている最新の状態」
+    edited_df = st.data_editor(
+        st.session_state.temp_req_df,
         column_config=column_config,
         use_container_width=True,
         hide_index=True,
         height=700,
-        key="request_editor"
+        key="editor"
     )
 
-    # 3. 保存ボタン
-    if st.button("💾 休み希望を確定保存する"):
-        if save_sheet_robust(edited_req, "rest_requests"):
-            st.success("スプレッドシートに休み希望を保存しました！")
-            st.rerun()
+    # 3. 保存ボタンが押されたときだけ、一気にスプレッドシートへ送る
+    if st.button("💾 休み希望をスプレッドシートに一括保存"):
+        if save_sheet_robust(edited_df, "rest_requests"):
+            # 保存に成功したら、貯金箱を最新の状態に更新し、キャッシュをクリアする
+            st.session_state.temp_req_df = edited_df
+            st.cache_data.clear() 
+            st.success("スプレッドシートへの一括書き込みが完了しました！")
 else:
     
     # --- ここに新しい「シフト作成」のプログラムを書いていく ---
