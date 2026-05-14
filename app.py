@@ -69,7 +69,7 @@ def save_master(df):
 st.title(" 従業員名簿・グループ管理")
 st.info("💡 下の表に名前を打ち込んで『保存』してください。")
 st.sidebar.title("メニュー")
-mode = st.sidebar.radio("機能を選択", ["従業員名簿管理", "シフト自動生成（案）","休み希望入力"])
+mode = st.sidebar.radio("機能を選択", ["休み希望入力","従業員名簿管理", "シフト自動生成（案）"])
 
 pw = st.sidebar.text_input("管理者パスワード", type="password")
 
