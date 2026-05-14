@@ -97,8 +97,8 @@ if mode == "従業員名簿管理":
                     "デザート": st.column_config.CheckboxColumn("デザート"),
                 },
                 use_container_width=True,
-            num_rows="dynamic", # 行の追加削除を有効化
-            key="master_editor"
+                    num_rows="dynamic", # 行の追加削除を有効化
+                    key="master_editor"
         )
             
     
