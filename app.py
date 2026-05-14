@@ -39,7 +39,7 @@ def load_master():
 @st.cache_data(ttl=600)
 def load_sheet_cached(worksheet_name):
     try:
-        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=worksheet_name, ttl=0)
+        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=worksheet_name)
         if df is not None:
             return df
         return None # 失敗時はNoneを返す
