@@ -119,66 +119,66 @@ else:
     # 段階的ステップ2: グループごとにリストを作る
     st.subheader("2. スタッフの選出と割り当て（試作）")
 
-    # 名簿から HN（ホール夜）と W（共通）の人を抽出
-    hn_candidates = master_df[master_df['グループ'] == 'HN']['名前'].tolist()
-    w_candidates = master_df[master_df['グループ'] == 'W']['名前'].tolist()
+    st.subheader("2. 全ポジションの自動割り当て")
 
-    # --- 割り当ての計算（ホール夜） ---
-    # 1. まずHNの人をランダムに並べ替える
-    random.shuffle(hn_candidates)
+    # --- 準備：グループごとに名簿を作る ---
+    hd_pool = master_df[master_df['グループ'] == 'HD']['名前'].tolist()
+    hn_pool = master_df[master_df['グループ'] == 'HN']['名前'].tolist()
+    kd_pool = master_df[master_df['グループ'] == 'KD']['名前'].tolist()
+    kn_pool = master_df[master_df['グループ'] == 'KN']['名前'].tolist()
+    w_pool = master_df[master_df['グループ'] == 'W']['名前'].tolist()
+
+    # 全ての名簿をシャッフル（公平にするため）
+    random.shuffle(hd_pool)
+    random.shuffle(hn_pool)
+    random.shuffle(kd_pool)
+    random.shuffle(kn_pool)
+    random.shuffle(w_pool)
+
+    # 「今日すでにどこかの枠に割り当てられた人」をメモするリスト
+    assigned_today = []
+
+    # 共通の「割り当て関数」を作るとミスが減ります
+    def assign_slots(slot_list, main_pool, wildcard_pool, assigned_list):
+        result = []
+        # メインの担当者(HD等)と共通(W)を合体
+        combined_pool = main_pool + wildcard_pool
+        
+        for slot_time in slot_list:
+            # まだ選ばれていない人だけを抽出（ここが引き算！）
+            available = [name for name in combined_pool if name not in assigned_list]
+            
+            if available:
+                picked = available[0] # 一番上の人を選ぶ
+                result.append({"スロット": slot_time, "担当者": picked})
+                assigned_list.append(picked) # 選ばれた人を「使用済み」に入れる
+            else:
+                result.append({"スロット": slot_time, "担当者": "⚠️ 欠員"})
+        return result
+
+    # --- 1. 昼の枠（基本2名ずつ） ---
+    day_slots = ["10:00-18:00", "10:00-18:00"]
+    hd_results = assign_slots(day_slots, hd_pool, w_pool, assigned_today)
+    kd_results = assign_slots(day_slots, kd_pool, w_pool, assigned_today)
+
+    # --- 2. 夜の枠（基本4名ずつ） ---
+    hall_night_slots = ["18:00-23:00", "18:00-23:00", "18:00-22:00", "19:00-23:00"]
+    kitchen_night_slots = ["18:00-23:00", "18:00-23:00", "18:00-22:00", "19:00-23:00"]
     
-    # 2. 足りない場合に備えてWの人も並べ替えて準備
-    random.shuffle(w_candidates)
+    hn_results = assign_slots(hall_night_slots, hn_pool, w_pool, assigned_today)
+    kn_results = assign_slots(kitchen_night_slots, kn_pool, w_pool, assigned_today)
 
-    # 3. ホールの全候補者を合体させる（HNが前、Wが後ろになるように）
-    # これにより、HNから優先的に選ばれ、足りなくなったらWが選ばれるようになります
-    all_hall_night_candidates = hn_candidates + w_candidates
+    # --- 結果の表示 ---
+    c1, c2 = st.columns(2)
+    with c1:
+        st.write("🏃 ホール昼(HD)")
+        st.table(pd.DataFrame(hd_results))
+        st.write("🏃 ホール夜(HN)")
+        st.table(pd.DataFrame(hn_results))
+    with c2:
+        st.write("🍳 キッチン昼(KD)")
+        st.table(pd.DataFrame(kd_results))
+        st.write("🍳 キッチン夜(KN)")
+        st.table(pd.DataFrame(kn_results))
 
-    # 4. スロット（椅子）に順番に座らせる
-    hall_assignments = {}
-    for i in range(len(hall_night_slots)):
-        slot_time = hall_night_slots[i]
-        
-        # 候補者がまだ残っていれば割り当てる
-        if i < len(all_hall_night_candidates):
-            assigned_name = all_hall_night_candidates[i]
-        else:
-            assigned_name = "⚠️ 欠員（候補者不足）"
-        
-        hall_assignments[f"枠 {i+1} ({slot_time})"] = assigned_name
-
-    # 5. 結果を画面に出す
-    st.write("🏃 ホール夜の割り当て結果")
-    st.table(pd.DataFrame(hall_assignments.items(), columns=["スロット", "担当者"]))
-
-
-    kn_candidates = master_df[master_df['グループ'] == 'KN']['名前'].tolist()
-    w_candidates = master_df[master_df['グループ'] == 'W']['名前'].tolist()
-
-    # --- 割り当ての計算（ホール夜） ---
-    # 1. まずHNの人をランダムに並べ替える
-    random.shuffle(kn_candidates)
-    
-    # 2. 足りない場合に備えてWの人も並べ替えて準備
-    random.shuffle(w_candidates)
-
-    # 3. キッチン夜の全候補者を合体させる（KNが前、Wが後ろになるように）
-    # これにより、KNから優先的に選ばれ、足りなくなったらWが選ばれるようになります
-    all_kitchen_night_candidates = hn_candidates + w_candidates
-
-    # 4. スロット（椅子）に順番に座らせる
-    kitchen_assignments = {}
-    for i in range(len(kitchen_night_slots)):
-        slot_time = kitchen_night_slots[i]
-        
-        # 候補者がまだ残っていれば割り当てる
-        if i < len(all_kitchen_night_candidates):
-            assigned_name = all_kitchen_night_candidates[i]
-        else:
-            assigned_name = "⚠️ 欠員（候補者不足）"
-        
-        kitchen_assignments[f"枠 {i+1} ({slot_time})"] = assigned_name
-
-    # 5. 結果を画面に出す
-    st.write("🏃 キッチン夜の割り当て結果")
-    st.table(pd.DataFrame(kitchen_assignments.items(), columns=["スロット", "担当者"]))
+    st.success("全てのポジションで『自グループ優先 ＞ 空いていればWから補充 ＞ 1人1ポジションのみ』のルールが適用されました！")
