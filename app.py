@@ -117,7 +117,7 @@ elif mode == "休み希望入力":
     # 1. 貯金箱（session_state）にデータが入っているか確認
     # 入っていなければ、スプレッドシートから初回読み込みを行う
     if "temp_req_df" not in st.session_state:
-        raw_data = load_sheet_cached("rest_requests")
+        raw_data = load_sheet_cached("req_2026_05")
         days_cols = [f"{d}日" for d in range(1, 32)]
         
         if raw_data.empty:
@@ -254,3 +254,4 @@ elif mode == "シフト自動生成（案）":
             st.table(pd.DataFrame(kn_results))
 
         st.success("全てのポジションで『自グループ優先 ＞ 空いていればWから補充 ＞ 1人1ポジションのみ』のルールが適用されました！")
+        
