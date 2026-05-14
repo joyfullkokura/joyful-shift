@@ -60,29 +60,30 @@ if mode == "従業員名簿管理":
         st.caption("グループ：【HD:ホール昼, HN:ホール夜, KD:キッチン昼, KN:キッチン夜, W:共通】")
     
     # 型エラーを防ぐためのエディタ設定
-    edited_df = st.data_editor(
-        master_df,
-        column_config={
-            "名前": st.column_config.TextColumn("名前", required=True),
-            "職種": st.column_config.SelectboxColumn("職種", options=["👔社員", "☕DF", "🍳DK"]),
-            "グループ": st.column_config.SelectboxColumn("グループ", options=["HD", "HN", "KD", "KN", "W"]),
-            "週希望": st.column_config.NumberColumn("週希望", min_value=1, max_value=7, step=1, default=3),
-            "レジ締め": st.column_config.CheckboxColumn("レジ締め"),
-            "デザート": st.column_config.CheckboxColumn("デザート"),
-        },
-        use_container_width=True,
-        num_rows="dynamic", # 行の追加削除を有効化
-        key="master_editor"
-    )
+        edited_df = st.data_editor(
+            master_df,
+            column_config={
+                "名前": st.column_config.TextColumn("名前", required=True),
+                "職種": st.column_config.SelectboxColumn("職種", options=["👔社員", "☕DF", "🍳DK"]),
+                "グループ": st.column_config.SelectboxColumn("グループ", options=["HD", "HN", "KD", "KN", "W"]),
+                "週希望": st.column_config.NumberColumn("週希望", min_value=1, max_value=7, step=1, default=3),
+                "レジ締め": st.column_config.CheckboxColumn("レジ締め"),
+                "デザート": st.column_config.CheckboxColumn("デザート"),
+            },
+            use_container_width=True,
+            num_rows="dynamic", # 行の追加削除を有効化
+            key="master_editor"
+        )
     
-    if st.button("💾 スプレッドシートに保存"):
-        if save_master(edited_df):
-            st.success("スプレッドシートに保存しました！")
-            st.rerun()
+        if st.button("💾 スプレッドシートに保存"):
+            if save_master(edited_df):
+                st.success("スプレッドシートに保存しました！")
+                st.rerun()
     else:
         st.warning("左側のメニューでパスワード『1234』を入力してください。")
         st.write("### 現在の名簿（閲覧のみ）")
-        st.dataframe(master_df, use_container_width=True)
+        if not master_df.empty:
+            st.dataframe(master_df, use_container_width=True)
 else:
     # --- ここに新しい「シフト作成」のプログラムを書いていく ---
     st.title("📅 シフト自動生成（案）")
