@@ -39,7 +39,7 @@ def load_master():
 @st.cache_data(ttl=600)
 def load_sheet_cached(worksheet_name):
     try:
-        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=worksheet_name,ttl=0)
+        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=worksheet_name, ttl=0)
         if df is not None:
             return df
         return None # 失敗時はNoneを返す
@@ -66,7 +66,7 @@ def save_master(df):
 
 # --- 3. メイン画面 ---
 st.title(" 従業員名簿・グループ管理")
-st.info("💡 ")
+st.info("💡 i")
 st.sidebar.title("メニュー")
 mode = st.sidebar.radio("機能を選択", ["休み希望入力","従業員名簿管理", "シフト自動生成（案）"])
 
