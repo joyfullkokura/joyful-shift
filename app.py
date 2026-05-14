@@ -35,7 +35,27 @@ def load_master():
         return empty_df
     except:
         return empty_df
+# データを読み込むための「道具（関数）」
+def load_sheet_cached(worksheet_name, default_df):
+    try:
+        # スプレッドシートからデータを読み込む
+        # ttl=0 は「記憶せず常に最新を取る」という意味
+        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=worksheet_name, ttl=0)
+        if df is not None and not df.empty:
+            return df.dropna(how='all') # 完全に空の行は捨てる
+        return default_df
+    except:
+        return default_df # 失敗したら「空の表」を返す
 
+# データを保存するための「道具（関数）」
+def save_sheet_robust(df, worksheet_name):
+    try:
+        # 保存するときに「名前」などの列を整理して書き込む
+        conn.update(spreadsheet=SPREADSHEET_URL, worksheet=worksheet_name, data=df)
+        st.cache_data.clear() # 古い記憶を消去
+        return True
+    except:
+        return False
 def save_master(df):
     # 名前が空の行を削除
     df = df.dropna(subset=["名前"])
@@ -49,12 +69,19 @@ def save_master(df):
 st.title(" 従業員名簿・グループ管理")
 st.info("💡 下の表に名前を打ち込んで『保存』してください。")
 st.sidebar.title("メニュー")
-mode = st.sidebar.radio("機能を選択", ["従業員名簿管理", "シフト自動生成（案）"])
+mode = st.sidebar.radio("機能を選択", ["従業員名簿管理", "シフト自動生成（案）","休み希望入力"])
 
 pw = st.sidebar.text_input("管理者パスワード", type="password")
 
 # データのロード
 master_df = load_master()
+# ここで ALL_NAMES を定義します！
+if not master_df.empty:
+    # master_df の「名前」列をリスト形式に変換して保存
+    ALL_NAMES = master_df["名前"].tolist()
+else:
+    # もし名簿が空っぽなら、エラーにならないように空のリストを作る
+    ALL_NAMES = []
 if mode == "従業員名簿管理":
     if pw == "1234":
         st.caption("グループ：【HD:ホール昼, HN:ホール夜, KD:キッチン昼, KN:キッチン夜, W:共通】")
@@ -84,7 +111,49 @@ if mode == "従業員名簿管理":
         st.write("### 現在の名簿（閲覧のみ）")
         if not master_df.empty:
             st.dataframe(master_df, use_container_width=True)
+            # --- ① 休み希望入力 ---
+if mode == "休み希望入力":
+    st.title("📅 休み希望の登録")
+    
+    # 1. 休み希望データをスプレッドシートから読み込む
+    # まだデータがない（初回）の場合は、名前列だけの空の表を作る
+    req_df_raw = load_sheet_cached("rest_requests", pd.DataFrame())
+    # 今月の日付（1日〜31日）を列の名前にする
+    days_cols = [f"{d}日" for d in range(1, 32)]
+    
+    if req_df_raw.empty:
+        # 初めて作る場合：名簿の全員分、全ての日にチェックがない(False)表を作成
+        req_df = pd.DataFrame(False, index=range(len(ALL_NAMES)), columns=["名前"] + days_cols)
+        req_df["名前"] = ALL_NAMES
+    else:
+        # すでにデータがある場合：名簿と同期させる（新人がいれば追加、辞めた人がいれば削除）
+        # 名前を基準に、今の名簿(ALL_NAMES)に合わせて行を整える
+        req_df = req_df_raw.set_index('名前').reindex(ALL_NAMES).reset_index().fillna(False)
+
+    st.info("💡 自分の名前の行を探して、休みたい日にチェックを入れて『保存』してください。")
+
+    # 2. 編集エディタを表示
+    # 全ての日付列を「チェックボックス」として設定
+    column_config = {"名前": st.column_config.TextColumn("名前", width="medium", disabled=True)}
+    for col in days_cols:
+        column_config[col] = st.column_config.CheckboxColumn(col, width="small")
+
+    edited_req = st.data_editor(
+        req_df,
+        column_config=column_config,
+        use_container_width=True,
+        hide_index=True,
+        height=700,
+        key="request_editor"
+    )
+
+    # 3. 保存ボタン
+    if st.button("💾 休み希望を確定保存する"):
+        if save_sheet_robust(edited_req, "rest_requests"):
+            st.success("スプレッドシートに休み希望を保存しました！")
+            st.rerun()
 else:
+    
     # --- ここに新しい「シフト作成」のプログラムを書いていく ---
     st.title("📅 シフト自動生成（案）")
     
