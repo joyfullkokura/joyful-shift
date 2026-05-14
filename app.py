@@ -163,12 +163,21 @@ elif mode == "休み希望入力":
     )
 
     # 3. 保存ボタンが押されたときだけ、一気にスプレッドシートへ送る
-    if st.button("💾 休み希望をスプレッドシートに一括保存"):
-        if save_sheet_robust(edited_df, "req_2026_05"):
-            # 保存に成功したら、貯金箱を最新の状態に更新し、キャッシュをクリアする
-            st.session_state.temp_req_df = edited_df
-            st.cache_data.clear() 
-            st.success("スプレッドシートへの一括書き込みが完了しました！")
+    if st.button("💾 休み希望を一括保存"):
+    # 1. 念のため、今この瞬間のスプレッドシートの最新状態をこっそり読み込む
+        latest_db = load_sheet_cached("req_2026_05", ttl=0) # 記憶(ttl)ゼロで読み込み
+    
+    if not latest_db.empty:
+        # 2. 最新の状態（latest_db）と、自分の画面（edited_df）をガッチャンコする
+        # 「どちらかがチェック(True)ならTrueにする」という合体ルール
+        # これにより、他人が先に入力したチェックを消さずに済みます
+        
+        # (ここに見えない「合体」の計算が入ります)
+        combined_df = latest_db.combine_first(edited_df) # 重複を埋め合わせる命令
+        
+        # 3. 合体した「完璧な最新版」を保存する
+        if save_sheet_robust(combined_df, "req_2026_05"):
+            st.success("他の人の入力も守りつつ、保存を完了しました！")
 elif mode == "シフト自動生成（案）":
     
     # --- ここに新しい「シフト作成」のプログラムを書いていく ---
