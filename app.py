@@ -152,3 +152,34 @@ else:
     st.table(pd.DataFrame(hall_assignments.items(), columns=["スロット", "担当者"]))
 
     st.success("HNグループを優先し、足りない場合はWグループから選ぶロジックが動いています！")
+
+    kn_candidates = master_df[master_df['グループ'] == 'KN']['名前'].tolist()
+    w_candidates = master_df[master_df['グループ'] == 'W']['名前'].tolist()
+
+    # --- 割り当ての計算（ホール夜） ---
+    # 1. まずHNの人をランダムに並べ替える
+    random.shuffle(kn_candidates)
+    
+    # 2. 足りない場合に備えてWの人も並べ替えて準備
+    random.shuffle(w_candidates)
+
+    # 3. キッチン夜の全候補者を合体させる（KNが前、Wが後ろになるように）
+    # これにより、KNから優先的に選ばれ、足りなくなったらWが選ばれるようになります
+    all_hall_night_candidates = hn_candidates + w_candidates
+
+    # 4. スロット（椅子）に順番に座らせる
+    hall_assignments = {}
+    for i in range(len(kitchen_night_slots)):
+        slot_time = kitchen_night_slots[i]
+        
+        # 候補者がまだ残っていれば割り当てる
+        if i < len(all_hall_night_candidates):
+            assigned_name = all_hall_night_candidates[i]
+        else:
+            assigned_name = "⚠️ 欠員（候補者不足）"
+        
+        hall_assignments[f"枠 {i+1} ({slot_time})"] = assigned_name
+
+    # 5. 結果を画面に出す
+    st.write("🏃 キッチン夜の割り当て結果")
+    st.table(pd.DataFrame(hall_assignments.items(), columns=["スロット", "担当者"]))
