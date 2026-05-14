@@ -148,7 +148,7 @@ if mode == "休み希望入力":
 
     # 3. 保存ボタンが押されたときだけ、一気にスプレッドシートへ送る
     if st.button("💾 休み希望をスプレッドシートに一括保存"):
-        if save_sheet_robust(edited_df, "rest_requests"):
+        if save_sheet_robust(edited_df, "req_2026_05"):
             # 保存に成功したら、貯金箱を最新の状態に更新し、キャッシュをクリアする
             st.session_state.temp_req_df = edited_df
             st.cache_data.clear() 
