@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from streamlit_gsheets import GSheetsConnection
+import random
 
 st.set_page_config(page_title="ジョイフル シフト管理", layout="wide")
 
@@ -50,14 +51,13 @@ st.info("💡 下の表に名前を打ち込んで『保存』してください
 st.sidebar.title("メニュー")
 mode = st.sidebar.radio("機能を選択", ["従業員名簿管理", "シフト自動生成（案）"])
 
-
 pw = st.sidebar.text_input("管理者パスワード", type="password")
 
 # データのロード
 master_df = load_master()
 if mode == "従業員名簿管理":
     if pw == "1234":
-     st.caption("グループ：【HD:ホール昼, HN:ホール夜, KD:キッチン昼, KN:キッチン夜, W:共通】")
+        st.caption("グループ：【HD:ホール昼, HN:ホール夜, KD:キッチン昼, KN:キッチン夜, W:共通】")
     
     # 型エラーを防ぐためのエディタ設定
     edited_df = st.data_editor(
@@ -80,7 +80,7 @@ if mode == "従業員名簿管理":
             st.success("スプレッドシートに保存しました！")
             st.rerun()
     else:
-     st.warning("左側のメニューでパスワード『1234』を入力してください。")
+        st.warning("左側のメニューでパスワード『1234』を入力してください。")
     if not master_df.empty:
         st.write("### 現在の名簿（閲覧のみ）")
         st.dataframe(master_df, use_container_width=True)
@@ -116,3 +116,39 @@ else:
         st.write(kitchen_night_slots)
 
     st.info("次のステップで、各グループ（HN, KN, W）から人をランダムに選んでこの枠に当てはめます。")
+    # 段階的ステップ2: グループごとにリストを作る
+    st.subheader("2. スタッフの選出と割り当て（試作）")
+
+    # 名簿から HN（ホール夜）と W（共通）の人を抽出
+    hn_candidates = master_df[master_df['グループ'] == 'HN']['名前'].tolist()
+    w_candidates = master_df[master_df['グループ'] == 'W']['名前'].tolist()
+
+    # --- 割り当ての計算（ホール夜） ---
+    # 1. まずHNの人をランダムに並べ替える
+    random.shuffle(hn_candidates)
+    
+    # 2. 足りない場合に備えてWの人も並べ替えて準備
+    random.shuffle(w_candidates)
+
+    # 3. ホールの全候補者を合体させる（HNが前、Wが後ろになるように）
+    # これにより、HNから優先的に選ばれ、足りなくなったらWが選ばれるようになります
+    all_hall_night_candidates = hn_candidates + w_candidates
+
+    # 4. スロット（椅子）に順番に座らせる
+    hall_assignments = {}
+    for i in range(len(hall_night_slots)):
+        slot_time = hall_night_slots[i]
+        
+        # 候補者がまだ残っていれば割り当てる
+        if i < len(all_hall_night_candidates):
+            assigned_name = all_hall_night_candidates[i]
+        else:
+            assigned_name = "⚠️ 欠員（候補者不足）"
+        
+        hall_assignments[f"枠 {i+1} ({slot_time})"] = assigned_name
+
+    # 5. 結果を画面に出す
+    st.write("🏃 ホール夜の割り当て結果")
+    st.table(pd.DataFrame(hall_assignments.items(), columns=["スロット", "担当者"]))
+
+    st.success("HNグループを優先し、足りない場合はWグループから選ぶロジックが動いています！")
