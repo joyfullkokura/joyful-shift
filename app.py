@@ -162,22 +162,43 @@ elif mode == "休み希望入力":
         key="editor"
     )
 
-    # 3. 保存ボタンが押されたときだけ、一気にスプレッドシートへ送る
-    if st.button("💾 休み希望を一括保存"):
-    # 1. 念のため、今この瞬間のスプレッドシートの最新状態をこっそり読み込む
-        latest_db = load_sheet_cached("req_2026_05", ttl=0) # 記憶(ttl)ゼロで読み込み
-    
-    if not latest_db.empty:
-        # 2. 最新の状態（latest_db）と、自分の画面（edited_df）をガッチャンコする
-        # 「どちらかがチェック(True)ならTrueにする」という合体ルール
-        # これにより、他人が先に入力したチェックを消さずに済みます
-        
-        # (ここに見えない「合体」の計算が入ります)
-        combined_df = latest_db.combine_first(edited_df) # 重複を埋め合わせる命令
-        
-        # 3. 合体した「完璧な最新版」を保存する
-        if save_sheet_robust(combined_df, "req_2026_05"):
-            st.success("他の人の入力も守りつつ、保存を完了しました！")
+    # ---------------------------------------------------------
+    # 3. 保存ボタン：ここから下が「合体保存」のロジックです
+    # ---------------------------------------------------------
+    if st.button("💾 他人の入力も守って一括保存", key="save_button"):
+        with st.spinner("最新のデータと合体させて保存中..."):
+            # A. スプレッドシートから「今この瞬間」の最新状態を読み込む（ttl=0で強制取得）
+            # load_sheet_cached 関数が None を返す可能性があるので慎重に扱います
+            latest_db = load_sheet_cached("req_2026_05") 
+            
+            if latest_db is not None:
+                # B. 合体（マージ）の準備
+                # 名前を基準に合体させるため、一時的に「名前」をインデックス（行の見出し）にします
+                # latest_db の1列目が名前であることを想定
+                latest_db_indexed = latest_db.set_index(latest_db.columns[0])
+                
+                # 画面で見ている自分のデータ（edited_df）も同様に「名前」を基準にします
+                my_data_indexed = edited_df.set_index(edited_df.columns[0])
+                
+                # C. 【魔法の命令】combine_first（コンバイン・ファースト）
+                # 自分のチェック(my_data)を優先しつつ、空いている場所を他人のチェック(latest_db)で埋めます
+                # これにより、自分が入力中に他人が保存したチェックも消えずに残ります
+                combined_df = my_data_indexed.combine_first(latest_db_indexed)
+                
+                # D. 合体した最新データをスプレッドシートへ送信
+                # reset_index() で「名前」を列に戻してから保存します
+                if save_sheet_robust(combined_df.reset_index(), "req_2026_05"):
+                    # 成功したら、貯金箱（session_state）も最新版に更新
+                    st.session_state.temp_req_df = combined_df.reset_index()
+                    # 10分間の古い記憶（キャッシュ）を消去
+                    st.cache_data.clear() 
+                    st.success("✅ 他の人の入力も合体させて、無事に保存が完了しました！")
+                    # 画面をリフレッシュして最新を表示
+                    st.rerun()
+            else:
+                # 読み込みに失敗した場合
+                st.error("🚫 最新データの取得に失敗しました。ネット環境を確認してやり直してください。")
+
 elif mode == "シフト自動生成（案）":
     
     # --- ここに新しい「シフト作成」のプログラムを書いていく ---
