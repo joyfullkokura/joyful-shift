@@ -254,17 +254,30 @@ elif mode == "シフト自動生成（案）":
         kn_results = assign_slots(kitchen_night_slots, kn_pool, w_pool, assigned_today)
 
     # --- 結果の表示 ---
-        c1, c2 = st.columns(2)
-        with c1:
-            st.write("🏃 ホール昼(HD)")
-            st.table(pd.DataFrame(hd_results))
-            st.write("🏃 ホール夜(HN)")
-            st.table(pd.DataFrame(hn_results))
-        with c2:
-            st.write("🍳 キッチン昼(KD)")
-            st.table(pd.DataFrame(kd_results))
-            st.write("🍳 キッチン夜(KN)")
-            st.table(pd.DataFrame(kn_results))
+    
+        # 段階的ステップ3: 名簿順に並び替えた1日シフト表の作成
+        st.subheader("3. 本日の確定シフト案（名簿順）")
 
-        st.success("全てのポジションで『自グループ優先 ＞ 空いていればWから補充 ＞ 1人1ポジションのみ』のルールが適用されました！")
+    # 1. すべてのグループの結果を1つの辞書にまとめる
+    # key: 名前, value: 時間
+        daily_schedule = {name: "" for name in ALL_NAMES}
+
+    # 各グループの計算結果（hd_resultsなど）から名前と時間を抜き出して辞書に入れる
+    # ※ assign_slots関数の戻り値形式に合わせて処理
+        for res in hd_results + hn_results + kd_results + kn_results:
+            if res["担当者"] != "⚠️ 欠員":
+                daily_schedule[res["担当者"]] = res["スロット"]
+
+    # 2. 表示用の表（DataFrame）を作成
+    # ALL_NAMES（名簿）を元に作るので、自動的に名簿順になります
+        final_view_df = pd.DataFrame([
+        {"名前": name, "シフト時間": daily_schedule[name]} 
+        for name in ALL_NAMES
+    ])
+
+    # 3. 画面に表示
+        st.write("📖 今日の全スタッフ配置一覧")
+        st.table(final_view_df)
+
+        st.info("💡 名簿の順番通りに並び、シフトがない人は空欄になっています。")
         
