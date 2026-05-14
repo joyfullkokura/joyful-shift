@@ -125,12 +125,21 @@ elif mode == "休み希望入力":
             df["名前"] = ALL_NAMES
             st.session_state.temp_req_df = df
         else:
-            # 1. 最初の列（名前）をインデックスに設定して、重複を消す
-            df = raw_data.drop_duplicates(subset=raw_data.columns[0]).set_index(raw_data.columns[0])
-            # 名簿と同期して貯金箱に入れる
-            df = raw_data.set_index('名前').reindex(ALL_NAMES).reset_index().fillna(False)
+            # 1. 最初の列（名前）をインデックス（行のラベル）に設定して、表の中から「避難」させる
+            # これで「名前」の列は変換（map）の対象外になります
+            df = raw_data.set_index(raw_data.columns[0])
+            
+            # 2. 最新の名簿（ALL_NAMES）に合わせて、新人の追加や退職者の削除を行う
+            df = df.reindex(ALL_NAMES)
+            
+            # 3. スプレッドシートの「TRUE」という文字を、チェックボックス用の「真偽値（True/False）」に翻訳する
+            # 名前は避難させているので、日付のデータだけが正しく翻訳されます
             df = df.map(lambda x: str(x).upper() == "TRUE" if isinstance(x, str) else bool(x))
-             # 4. 最後に名前を列に戻して、貯金箱に入れる
+            
+            # 4. 空っぽのセル（新人の日付など）を False（休みなし）で埋める
+            df = df.fillna(False)
+            
+            # 5. 最後に名前をデータ（列）に戻して、貯金箱に入れる
             st.session_state.temp_req_df = df.reset_index()
 
     st.info("💡 作業中は自動保存されません。最後に必ず下の『確定保存』を押してください。")
