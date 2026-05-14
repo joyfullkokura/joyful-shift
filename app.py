@@ -81,9 +81,9 @@ if mode == "従業員名簿管理":
             st.rerun()
     else:
         st.warning("左側のメニューでパスワード『1234』を入力してください。")
-if not master_df.empty:
-    st.write("### 現在の名簿（閲覧のみ）")
-    st.dataframe(master_df, use_container_width=True)
+        if not master_df.empty:
+            st.write("### 現在の名簿（閲覧のみ）")
+            st.dataframe(master_df, use_container_width=True)
 else:
     # --- ここに新しい「シフト作成」のプログラムを書いていく ---
     st.title("📅 シフト自動生成（案）")
