@@ -39,10 +39,12 @@ def load_master():
 @st.cache_data(ttl=600)
 def load_sheet_cached(worksheet_name):
     try:
-        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=worksheet_name)
-        return df
+        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=worksheet_name, ttl=0)
+        if df is not None:
+            return df
+        return None # 失敗時はNoneを返す
     except:
-        return pd.DataFrame()
+        return None
 
 # データを保存するための「道具（関数）」
 def save_sheet_robust(df, worksheet_name):
@@ -109,7 +111,7 @@ if mode == "従業員名簿管理":
             if not master_df.empty:
                 st.dataframe(master_df, use_container_width=True)
             # --- ① 休み希望入力 ---
-if mode == "休み希望入力":
+elif mode == "休み希望入力":
     st.title("📅 休み希望の登録")
 
     # 1. 貯金箱（session_state）にデータが入っているか確認
@@ -153,102 +155,102 @@ if mode == "休み希望入力":
             st.session_state.temp_req_df = edited_df
             st.cache_data.clear() 
             st.success("スプレッドシートへの一括書き込みが完了しました！")
-else:
+elif mode == "シフト自動生成（案）":
     
     # --- ここに新しい「シフト作成」のプログラムを書いていく ---
-    st.title("📅 シフト自動生成（案）")
+        st.title("📅 シフト自動生成（案）")
     
     # 段階的ステップ1: ジョイフルの「必要枠（スロット）」を定義する
-    st.subheader("1. 本日の必要人数（スロット）の確認")
+        st.subheader("1. 本日の必要人数（スロット）の確認")
     
     # ホール夜(HN)の枠を定義
-    hall_night_slots = [
-        "18:00-23:00", # 1人目
-        "18:00-23:00", # 2人目
-        "18:00-22:00", # 3人目
-        "19:00-23:00"  # 4人目
-    ]
+        hall_night_slots = [
+            "18:00-23:00", # 1人目
+            "18:00-23:00", # 2人目
+            "18:00-22:00", # 3人目
+            "19:00-23:00"  # 4人目
+        ]
     
     # キッチン夜(KN)の枠を定義
-    kitchen_night_slots = [
-        "18:00-23:00",
-        "18:00-23:00",
-        "18:00-22:00",
-        "19:00-23:00"
-    ]
+        kitchen_night_slots = [
+            "18:00-23:00",
+            "18:00-23:00",
+            "18:00-22:00",
+            "19:00-23:00"
+        ]
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write("🏃 ホール必要枠")
-        st.write(hall_night_slots)
-    with col2:
-        st.write("🍳 キッチン必要枠")
-        st.write(kitchen_night_slots)
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write("🏃 ホール必要枠")
+            st.write(hall_night_slots)
+        with col2:
+            st.write("🍳 キッチン必要枠")
+            st.write(kitchen_night_slots)
 
-    st.info("次のステップで、各グループ（HN, KN, W）から人をランダムに選んでこの枠に当てはめます。")
+        st.info("次のステップで、各グループ（HN, KN, W）から人をランダムに選んでこの枠に当てはめます。")
     # 段階的ステップ2: グループごとにリストを作る
-    st.subheader("2. スタッフの選出と割り当て（試作）")
+        st.subheader("2. スタッフの選出と割り当て（試作）")
 
-    st.subheader("2. 全ポジションの自動割り当て")
+        st.subheader("2. 全ポジションの自動割り当て")
 
     # --- 準備：グループごとに名簿を作る ---
-    hd_pool = master_df[master_df['グループ'] == 'HD']['名前'].tolist()
-    hn_pool = master_df[master_df['グループ'] == 'HN']['名前'].tolist()
-    kd_pool = master_df[master_df['グループ'] == 'KD']['名前'].tolist()
-    kn_pool = master_df[master_df['グループ'] == 'KN']['名前'].tolist()
-    w_pool = master_df[master_df['グループ'] == 'W']['名前'].tolist()
+        hd_pool = master_df[master_df['グループ'] == 'HD']['名前'].tolist()
+        hn_pool = master_df[master_df['グループ'] == 'HN']['名前'].tolist()
+        kd_pool = master_df[master_df['グループ'] == 'KD']['名前'].tolist()
+        kn_pool = master_df[master_df['グループ'] == 'KN']['名前'].tolist()
+        w_pool = master_df[master_df['グループ'] == 'W']['名前'].tolist()
 
     # 全ての名簿をシャッフル（公平にするため）
-    random.shuffle(hd_pool)
-    random.shuffle(hn_pool)
-    random.shuffle(kd_pool)
-    random.shuffle(kn_pool)
-    random.shuffle(w_pool)
+        random.shuffle(hd_pool)
+        random.shuffle(hn_pool)
+        random.shuffle(kd_pool)
+        random.shuffle(kn_pool)
+        random.shuffle(w_pool)
 
     # 「今日すでにどこかの枠に割り当てられた人」をメモするリスト
-    assigned_today = []
+        assigned_today = []
 
     # 共通の「割り当て関数」を作るとミスが減ります
-    def assign_slots(slot_list, main_pool, wildcard_pool, assigned_list):
-        result = []
+        def assign_slots(slot_list, main_pool, wildcard_pool, assigned_list):
+            result = []
         # メインの担当者(HD等)と共通(W)を合体
-        combined_pool = main_pool + wildcard_pool
+            combined_pool = main_pool + wildcard_pool
         
-        for slot_time in slot_list:
+            for slot_time in slot_list:
             # まだ選ばれていない人だけを抽出（ここが引き算！）
-            available = [name for name in combined_pool if name not in assigned_list]
+                available = [name for name in combined_pool if name not in assigned_list]
             
-            if available:
-                picked = available[0] # 一番上の人を選ぶ
-                result.append({"スロット": slot_time, "担当者": picked})
-                assigned_list.append(picked) # 選ばれた人を「使用済み」に入れる
-            else:
-                result.append({"スロット": slot_time, "担当者": "⚠️ 欠員"})
-        return result
+                if available:
+                    picked = available[0] # 一番上の人を選ぶ
+                    result.append({"スロット": slot_time, "担当者": picked})
+                    assigned_list.append(picked) # 選ばれた人を「使用済み」に入れる
+                else:
+                    result.append({"スロット": slot_time, "担当者": "⚠️ 欠員"})
+            return result
 
     # --- 1. 昼の枠（基本2名ずつ） ---
-    day_slots = ["10:00-18:00", "10:00-18:00"]
-    hd_results = assign_slots(day_slots, hd_pool, w_pool, assigned_today)
-    kd_results = assign_slots(day_slots, kd_pool, w_pool, assigned_today)
+        day_slots = ["10:00-18:00", "10:00-18:00"]
+        hd_results = assign_slots(day_slots, hd_pool, w_pool, assigned_today)
+        kd_results = assign_slots(day_slots, kd_pool, w_pool, assigned_today)
 
     # --- 2. 夜の枠（基本4名ずつ） ---
-    hall_night_slots = ["18:00-23:00", "18:00-23:00", "18:00-22:00", "19:00-23:00"]
-    kitchen_night_slots = ["18:00-23:00", "18:00-23:00", "18:00-22:00", "19:00-23:00"]
+        hall_night_slots = ["18:00-23:00", "18:00-23:00", "18:00-22:00", "19:00-23:00"]
+        kitchen_night_slots = ["18:00-23:00", "18:00-23:00", "18:00-22:00", "19:00-23:00"]
     
-    hn_results = assign_slots(hall_night_slots, hn_pool, w_pool, assigned_today)
-    kn_results = assign_slots(kitchen_night_slots, kn_pool, w_pool, assigned_today)
+        hn_results = assign_slots(hall_night_slots, hn_pool, w_pool, assigned_today)
+        kn_results = assign_slots(kitchen_night_slots, kn_pool, w_pool, assigned_today)
 
     # --- 結果の表示 ---
-    c1, c2 = st.columns(2)
-    with c1:
-        st.write("🏃 ホール昼(HD)")
-        st.table(pd.DataFrame(hd_results))
-        st.write("🏃 ホール夜(HN)")
-        st.table(pd.DataFrame(hn_results))
-    with c2:
-        st.write("🍳 キッチン昼(KD)")
-        st.table(pd.DataFrame(kd_results))
-        st.write("🍳 キッチン夜(KN)")
-        st.table(pd.DataFrame(kn_results))
+        c1, c2 = st.columns(2)
+        with c1:
+            st.write("🏃 ホール昼(HD)")
+            st.table(pd.DataFrame(hd_results))
+            st.write("🏃 ホール夜(HN)")
+            st.table(pd.DataFrame(hn_results))
+        with c2:
+            st.write("🍳 キッチン昼(KD)")
+            st.table(pd.DataFrame(kd_results))
+            st.write("🍳 キッチン夜(KN)")
+            st.table(pd.DataFrame(kn_results))
 
-    st.success("全てのポジションで『自グループ優先 ＞ 空いていればWから補充 ＞ 1人1ポジションのみ』のルールが適用されました！")
+        st.success("全てのポジションで『自グループ優先 ＞ 空いていればWから補充 ＞ 1人1ポジションのみ』のルールが適用されました！")
