@@ -118,17 +118,17 @@ elif mode == "休み希望入力":
     # 1. 貯金箱（session_state）にデータが入っているか確認
     # 入っていなければ、スプレッドシートから初回読み込みを行う
     if "temp_req_df" not in st.session_state:
-        latest_db = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="req_2026_05", ttl=0)
+        raw_data = load_sheet_cached("req_2026_05")
         days_cols = [f"{d}日" for d in range(1, 32)]
         
-        if latest_db.empty:
+        if raw_data.empty:
             df = pd.DataFrame(False, index=range(len(ALL_NAMES)), columns=["名前"] + days_cols)
             df["名前"] = ALL_NAMES
             st.session_state.temp_req_df = df
         else:
             # 1. 最初の列（名前）をインデックス（行のラベル）に設定して、表の中から「避難」させる
             # これで「名前」の列は変換（map）の対象外になります
-            df = latest_db.set_index(latest_db.columns[0])
+            df = raw_data.set_index(raw_data.columns[0])
             
             # 2. 最新の名簿（ALL_NAMES）に合わせて、新人の追加や退職者の削除を行う
             df = df.reindex(ALL_NAMES)
@@ -165,7 +165,7 @@ elif mode == "休み希望入力":
     # 3. 保存ボタンが押されたときだけ、一気にスプレッドシートへ送る
     if st.button("💾 休み希望を一括保存"):
     # 1. 念のため、今この瞬間のスプレッドシートの最新状態をこっそり読み込む
-        latest_db = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="req_2026_05", ttl=0) # 記憶(ttl)ゼロで読み込み
+        latest_db = load_sheet_cached("req_2026_05", ttl=0) # 記憶(ttl)ゼロで読み込み
     
         if not latest_db.empty:
         # 2. 最新の状態（latest_db）と、自分の画面（edited_df）をガッチャンコする
