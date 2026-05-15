@@ -158,7 +158,7 @@ if mode == "従業員名簿管理":
                 st.dataframe(master_df, use_container_width=True)
             # --- ① 休み希望入力 ---
 # --- ① 休み希望入力（新・個別入力方式の土台） ---
-if mode == "① 休み希望":
+elif mode == "① 休み希望":
     st.title(f"📅 {year}年{month}月の休み希望")
 
     # 1. スプレッドシートから現在の休み希望データを読み込む
