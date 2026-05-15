@@ -48,7 +48,7 @@ REQ_SHEET = f"req_{year}_{month:02}"
 master_df = load_sheet_no_cache("staff_master", pd.DataFrame())
 if not master_df.empty:
     # 職種アイコンと名前を合体させた「表示名」のリストを作る
-    master_df['表示名'] = master_df['職種'].astype(str).str.strip() + " " + master_df['名前'].astype(str).str.strip()
+    master_df['表示名'] = master_df['職種'].astype(str).str.strip() + " " + master_df.index.astype(str).str.strip()
     ALL_NAMES = master_df['表示名'].tolist()
 else:
     ALL_NAMES = []
