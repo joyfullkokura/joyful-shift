@@ -165,7 +165,7 @@ elif mode == "休み希望入力":
     # 3. 保存ボタンが押されたときだけ、一気にスプレッドシートへ送る
     if st.button("💾 休み希望を一括保存"):
     # 1. 念のため、今この瞬間のスプレッドシートの最新状態をこっそり読み込む
-        latest_db = load_sheet_cached("req_2026_05", ttl=0) # 記憶(ttl)ゼロで読み込み
+        latest_db = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="req_2026_05", ttl=0) # 記憶(ttl)ゼロで読み込み
     
         if not latest_db.empty:
         # 2. 最新の状態（latest_db）と、自分の画面（edited_df）をガッチャンコする
