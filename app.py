@@ -115,69 +115,7 @@ if mode == "従業員名簿管理":
 elif mode == "休み希望入力":
     st.title("📅 休み希望の登録")
 
-    # 1. 貯金箱（session_state）にデータが入っているか確認
-    # 入っていなければ、スプレッドシートから初回読み込みを行う
-    if "temp_req_df" not in st.session_state:
-        raw_data = load_sheet_cached("req_2026_05")
-        days_cols = [f"{d}日" for d in range(1, 32)]
-        
-        if raw_data.empty:
-            df = pd.DataFrame(False, index=range(len(ALL_NAMES)), columns=["名前"] + days_cols)
-            df["名前"] = ALL_NAMES
-            st.session_state.temp_req_df = df
-        else:
-            # 1. 最初の列（名前）をインデックス（行のラベル）に設定して、表の中から「避難」させる
-            # これで「名前」の列は変換（map）の対象外になります
-            df = raw_data.set_index(raw_data.columns[0])
-            
-            # 2. 最新の名簿（ALL_NAMES）に合わせて、新人の追加や退職者の削除を行う
-            df = df.reindex(ALL_NAMES)
-            
-            # 3. スプレッドシートの「TRUE」という文字を、チェックボックス用の「真偽値（True/False）」に翻訳する
-            # 名前は避難させているので、日付のデータだけが正しく翻訳されます
-            df = df.map(lambda x: str(x).upper() == "TRUE" if isinstance(x, str) else bool(x))
-            
-            # 4. 空っぽのセル（新人の日付など）を False（休みなし）で埋める
-            df = df.fillna(False)
-            
-            # 5. 最後に名前をデータ（列）に戻して、貯金箱に入れる
-            st.session_state.temp_req_df = df.reset_index()
-
-    st.info("💡 作業中は自動保存されません。最後に必ず下の『確定保存』を押してください。")
-
-    # 2. 画面に表示（貯金箱の中身を編集する）
-    # 日付列の設定
-    days_cols = [f"{d}日" for d in range(1, 32)]
-    column_config = {"名前": st.column_config.TextColumn("名前", disabled=True)}
-    for col in days_cols:
-        column_config[col] = st.column_config.CheckboxColumn(col, width="small")
-
-    # edited_df は「今画面で見ている最新の状態」
-    edited_df = st.data_editor(
-        st.session_state.temp_req_df,
-        column_config=column_config,
-        use_container_width=True,
-        hide_index=True,
-        height=700,
-        key="editor"
-    )
-
-    # 3. 保存ボタンが押されたときだけ、一気にスプレッドシートへ送る
-    if st.button("💾 休み希望を一括保存"):
-    # 1. 念のため、今この瞬間のスプレッドシートの最新状態をこっそり読み込む
-        latest_db = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="req_2026_05", ttl=0) # 記憶(ttl)ゼロで読み込み
     
-        if not latest_db.empty:
-        # 2. 最新の状態（latest_db）と、自分の画面（edited_df）をガッチャンコする
-        # 「どちらかがチェック(True)ならTrueにする」という合体ルール
-        # これにより、他人が先に入力したチェックを消さずに済みます
-        
-        # (ここに見えない「合体」の計算が入ります)
-            combined_df = latest_db.combine_first(edited_df) # 重複を埋め合わせる命令
-        
-        # 3. 合体した「完璧な最新版」を保存する
-            if save_sheet_robust(combined_df, "req_2026_05"):
-                st.success("他の人の入力も守りつつ、保存を完了しました！")
 elif mode == "シフト自動生成（案）":
     
     # --- ここに新しい「シフト作成」のプログラムを書いていく ---
