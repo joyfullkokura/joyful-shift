@@ -1,13 +1,57 @@
 import streamlit as st
 import pandas as pd
-from streamlit_gsheets import GSheetsConnection
+import calendar
 import random
+import io
+import time
+from datetime import date, timedelta  # 
+from streamlit_gsheets import GSheetsConnection
+
+def load_sheet_no_cache(worksheet_name, default_df):
+    try:
+        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=worksheet_name, ttl=0)
+        if df is not None and not df.empty:
+            df = df.dropna(how='all', axis=0)
+            first_col = df.columns[0]
+            df = df.drop_duplicates(subset=first_col, keep='first')
+            df = df.set_index(first_col)
+            df.index = df.index.astype(str).str.strip()
+            return df
+        return default_df
+    except Exception:
+        return default_df
 
 st.set_page_config(page_title="ジョイフル シフト管理", layout="wide")
 
 # --- 1. スプレッドシート接続設定 ---
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1dDyKAXYsHZg1ta4l7te84uSbhSea-FoyVgTeo4-kgkI/edit?gid=0#gid=0"
 conn = st.connection("gsheets", type=GSheetsConnection)
+# --- 準備：日付と名簿の情報を整理する ---
+
+# 1. 今日が何年何月かを取得
+if 'view_date' not in st.session_state:
+    st.session_state.view_date = date.today().replace(day=1)
+
+v_date = st.session_state.view_date
+year, month = v_date.year, v_date.month
+
+# 2. その月が何日まであるか調べて、列の名前（1(金)など）を作る
+num_days = calendar.monthrange(year, month)[1]
+WEEKDAYS_JP = ["月", "火", "水", "木", "金", "土", "日"]
+column_names = [f"{d}({WEEKDAYS_JP[calendar.weekday(year, month, d)]})" for d in range(1, num_days + 1)]
+
+# 3. スプレッドシートの「タブ名」を決める
+REQ_SHEET = f"req_{year}_{month:02}"
+
+# 4. 従業員名簿を読み込んで、全員の名前リスト（ALL_NAMES）を作る
+# ※ load_sheet_no_cache は以前作った関数を使います
+master_df = load_sheet_no_cache("staff_master", pd.DataFrame())
+if not master_df.empty:
+    # 職種アイコンと名前を合体させた「表示名」のリストを作る
+    master_df['表示名'] = master_df['職種'].astype(str).str.strip() + " " + master_df['名前'].astype(str).str.strip()
+    ALL_NAMES = master_df['表示名'].tolist()
+else:
+    ALL_NAMES = []
 
 # --- 2. データの読み書き関数 ---
 def load_master():
@@ -64,6 +108,7 @@ def save_master(df):
         return True
     return False
 
+
 # --- 3. メイン画面 ---
 st.title(" 従業員名簿・グループ管理")
 st.info("💡 i")
@@ -112,9 +157,39 @@ if mode == "従業員名簿管理":
             if not master_df.empty:
                 st.dataframe(master_df, use_container_width=True)
             # --- ① 休み希望入力 ---
-elif mode == "休み希望入力":
-    st.title("📅 休み希望の登録")
+# --- ① 休み希望入力（新・個別入力方式の土台） ---
+if mode == "① 休み希望":
+    st.title(f"📅 {year}年{month}月の休み希望")
 
+    # 1. スプレッドシートから現在の休み希望データを読み込む
+    # なければ名簿（ALL_NAMES）を元に真っ白な表を作る
+    r_raw = load_sheet_no_cache(REQ_SHEET, pd.DataFrame(False, index=ALL_NAMES, columns=column_names))
+    
+    # 2. データの整理：最新の名簿と同期させ、重複を消し、不足分をFalse(出勤)で埋める
+    # これにより、名簿管理で人を消せば消え、足せば自動でここにも現れます
+    req_df = r_raw.reindex(ALL_NAMES).fillna(False)
+    
+    # 3. スプレッドシートの「TRUE/FALSE」を確実にチェックボックス用の型(Bool)に変換
+    req_df = req_df.map(lambda x: str(x).upper() == "TRUE" if isinstance(x, str) else bool(x))
+
+    # 4. 全員の状況を確認できる「閲覧専用」の表を表示
+    st.subheader("📊 現在の全体の休み状況（閲覧のみ）")
+    st.dataframe(req_df, use_container_width=True, height=400)
+    
+    st.divider()
+
+    # 5. 入力画面へ進むためのボタンを全員分並べる
+    st.subheader("👤 自分の名前を選んで入力してください")
+    
+    # ボタンを横に4つずつ並べるための設定
+    cols = st.columns(4) 
+    for i, name in enumerate(ALL_NAMES):
+        # 名簿の人数分だけ、ボタンを順番に作成していく
+        # 割り切った数字で列(col)を切り替える
+        with cols[i % 4]:
+            if st.button(f"{name}", key=f"btn_{name}"):
+                # ボタンが押されたら「誰が編集中か」を貯金箱にメモする
+                st.session_state.editing_user = name
     
 elif mode == "シフト自動生成（案）":
     
