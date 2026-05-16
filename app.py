@@ -158,24 +158,23 @@ if mode == "従業員名簿管理":
                 st.dataframe(master_df, use_container_width=True)
             # --- ① 休み希望入力 ---
 
+# --- ① 休み希望入力（安定・部分更新版） ---
 if mode == "休み希望入力":
     st.title(f"📅 {year}年{month}月の休み希望")
 
-    # 【対策1】データは「貯金箱（session_state）」に1回だけ読み込む
-    # これにより、ボタンを押すたびにGoogleと通信しなくなります
+    # 1. データの初回読み込み（貯金箱への保管）
     state_key = f"full_req_data_{year}_{month}"
     if state_key not in st.session_state:
         with st.spinner("スプレッドシートからデータを読み込み中..."):
+            # load_sheet_no_cache 関数を使用して読み込み
             r_raw = load_sheet_no_cache(REQ_SHEET, pd.DataFrame(False, index=ALL_NAMES, columns=column_names))
             df = r_raw.reindex(ALL_NAMES).fillna(False)
             df = df.map(lambda x: str(x).upper() == "TRUE" if isinstance(x, str) else bool(x))
             st.session_state[state_key] = df
 
-    # 表示用のデータを貯金箱から取り出す
     req_df = st.session_state[state_key]
 
     st.subheader("📊 現在の全体の休み状況（閲覧のみ）")
-    # ここは手元のデータを見せるだけなので爆速です
     st.dataframe(req_df, use_container_width=True, height=300)
     
     st.divider()
@@ -207,36 +206,31 @@ if mode == "休み希望入力":
         
         with c_save:
             if st.button(f"💾 {user}さんの分を保存", type="primary"):
-                with st.spinner("スプレッドシートを更新中..."):
-                    try:
-                        # 【対策2】保存も「自分の行」だけをピンポイント更新
-                        sh = conn.client.open_by_url(SPREADSHEET_URL).worksheet(REQ_SHEET)
-                        cell = sh.find(user)
-                        if cell:
-                            # TRUE/FALSEの文字リストに変換
-                            new_vals = ["TRUE" if val else "FALSE" for val in edited_user_row.iloc[0].tolist()]
-                            
-                            # 該当行のB列（1日）から横に書き込み
-                            row_idx = cell.row
-                            sh.update(f"B{row_idx}", [new_vals])
-                            
-                            # 【対策3】手元の「貯金箱」も更新する（再読み込み不要にする）
-                            st.session_state[state_key].loc[user] = edited_user_row.loc[user]
-                            
-                            st.success(f"✅ {user}さんのデータを更新しました！")
-                            time.sleep(1)
-                            st.rerun()
-                        else:
-                            st.error("名簿に名前が見つかりません。")
-                    except Exception as e:
-                        st.error(f"保存エラー: {e}")
+                with st.spinner("最新データと合体させて保存中..."):
+                    # 【ここが修正の核心】
+                    # ① まず、今この瞬間のスプレッドシートの「全員分」を読み直す（他人の最新入力を含む）
+                    latest_all_df = load_sheet_no_cache(REQ_SHEET, pd.DataFrame(False, index=ALL_NAMES, columns=column_names))
+                    latest_all_df = latest_all_df.reindex(ALL_NAMES).fillna(False)
+                    
+                    # ② その最新の表の「自分の行だけ」を、今画面で入力した内容に差し替える
+                    # 他の人の行は、①で読み込んだ最新の状態が維持されます
+                    latest_all_df.loc[user] = edited_user_row.loc[user]
+                    
+                    # ③ 完成した「合体版」を、標準的な save_sheet_robust で保存する
+                    # これなら open_by_url のエラーは出ません
+                    if save_sheet_robust(latest_all_df, REQ_SHEET):
+                        # 貯金箱も最新に更新
+                        st.session_state[state_key] = latest_all_df
+                        st.success(f"✅ {user}さんのデータを保存しました！")
+                        time.sleep(1)
+                        st.rerun()
         
         with c_close:
             if st.button("❌ 入力を閉じる"):
                 del st.session_state.editing_user
                 st.rerun()
 
-    # 更新ボタン（どうしても最新を読み込みたい時用）
+    # 更新ボタン（サイドバー）
     st.sidebar.divider()
     if st.sidebar.button("🔄 全体表を最新に更新"):
         if state_key in st.session_state:
