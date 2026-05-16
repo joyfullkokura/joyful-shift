@@ -190,6 +190,35 @@ elif mode == "休み希望入力":
             if st.button(f"{name}", key=f"btn_{name}"):
                 # ボタンが押されたら「誰が編集中か」を貯金箱にメモする
                 st.session_state.editing_user = name
+                # 6. 名前が選ばれている場合だけ、個別入力欄（カレンダー）を表示する
+    if "editing_user" in st.session_state:
+        user = st.session_state.editing_user
+        st.divider()
+        st.subheader(f"📝 {user}さんの休み希望入力")
+
+        # 全体の表から、選ばれた人の行だけを抜き出す
+        # 名前をインデックスにすることで、日付の列だけが並ぶようになります
+        user_row = req_df[req_df['名前'] == user].set_index('名前')
+
+        # 選ばれた人の1行だけを編集できるエディタを表示
+        # これが実質的な「自分専用カレンダー」になります
+        edited_user_df = st.data_editor(
+            user_row,
+            use_container_width=True,
+            key="user_edit_panel"
+        )
+
+        # 保存とキャンセルのボタン
+        col_s1, col_s2 = st.columns([1, 5])
+        with col_s1:
+            if st.button("💾 保存", type="primary"):
+                # ここに保存のロジックを書きます（次のステップ）
+                st.success(f"{user}さんの入力を受け付けました（スプレッドシートへの保存は次のステップで実装！）")
+        with col_s2:
+            if st.button("❌ 閉じる"):
+                # 貯金箱から名前を消すと、入力欄が消えます
+                del st.session_state.editing_user
+                st.rerun()
     
 elif mode == "シフト自動生成（案）":
     
