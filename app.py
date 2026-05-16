@@ -194,13 +194,13 @@ elif mode == "① 休み希望":
 elif mode == "シフト自動生成（案）":
     
     # --- ここに新しい「シフト作成」のプログラムを書いていく ---
-        st.title("📅 シフト自動生成（案）")
+    st.title("📅 シフト自動生成（案）")
     
     # 段階的ステップ1: ジョイフルの「必要枠（スロット）」を定義する
-        st.subheader("1. 本日の必要人数（スロット）の確認")
+    st.subheader("1. 本日の必要人数（スロット）の確認")
     
     # ホール夜(HN)の枠を定義
-        hall_night_slots = [
+    hall_night_slots = [
             "18:00-23:00", # 1人目
             "18:00-23:00", # 2人目
             "18:00-22:00", # 3人目
@@ -208,43 +208,43 @@ elif mode == "シフト自動生成（案）":
         ]
     
     # キッチン夜(KN)の枠を定義
-        kitchen_night_slots = [
+    kitchen_night_slots = [
             "18:00-23:00",
             "18:00-23:00",
             "18:00-22:00",
             "19:00-23:00"
         ]
 
-        col1, col2 = st.columns(2)
-        with col1:
+    col1, col2 = st.columns(2)
+    with col1:
             st.write("🏃 ホール必要枠")
             st.write(hall_night_slots)
-        with col2:
+    with col2:
             st.write("🍳 キッチン必要枠")
             st.write(kitchen_night_slots)
 
-        st.info("次のステップで、各グループ（HN, KN, W）から人をランダムに選んでこの枠に当てはめます。")
+    st.info("次のステップで、各グループ（HN, KN, W）から人をランダムに選んでこの枠に当てはめます。")
     # 段階的ステップ2: グループごとにリストを作る
 
     # --- 準備：グループごとに名簿を作る ---
-        hd_pool = master_df[master_df['グループ'] == 'HD']['名前'].tolist()
-        hn_pool = master_df[master_df['グループ'] == 'HN']['名前'].tolist()
-        kd_pool = master_df[master_df['グループ'] == 'KD']['名前'].tolist()
-        kn_pool = master_df[master_df['グループ'] == 'KN']['名前'].tolist()
-        w_pool = master_df[master_df['グループ'] == 'W']['名前'].tolist()
+    hd_pool = master_df[master_df['グループ'] == 'HD']['名前'].tolist()
+    hn_pool = master_df[master_df['グループ'] == 'HN']['名前'].tolist()
+    kd_pool = master_df[master_df['グループ'] == 'KD']['名前'].tolist()
+    kn_pool = master_df[master_df['グループ'] == 'KN']['名前'].tolist()
+    w_pool = master_df[master_df['グループ'] == 'W']['名前'].tolist()
 
     # 全ての名簿をシャッフル（公平にするため）
-        random.shuffle(hd_pool)
-        random.shuffle(hn_pool)
-        random.shuffle(kd_pool)
-        random.shuffle(kn_pool)
-        random.shuffle(w_pool)
+    random.shuffle(hd_pool)
+    random.shuffle(hn_pool)
+    random.shuffle(kd_pool)
+    random.shuffle(kn_pool)
+    random.shuffle(w_pool)
 
     # 「今日すでにどこかの枠に割り当てられた人」をメモするリスト
-        assigned_today = []
+    assigned_today = []
 
     # 共通の「割り当て関数」を作るとミスが減ります
-        def assign_slots(slot_list, main_pool, wildcard_pool, assigned_list):
+    def assign_slots(slot_list, main_pool, wildcard_pool, assigned_list):
             result = []
         # メインの担当者(HD等)と共通(W)を合体
             combined_pool = main_pool + wildcard_pool
@@ -262,30 +262,30 @@ elif mode == "シフト自動生成（案）":
             return result
 
     # --- 1. 昼の枠（基本2名ずつ） ---
-        day_slots = ["10:00-18:00", "10:00-18:00"]
-        hd_results = assign_slots(day_slots, hd_pool, w_pool, assigned_today)
-        kd_results = assign_slots(day_slots, kd_pool, w_pool, assigned_today)
+    day_slots = ["10:00-18:00", "10:00-18:00"]
+    hd_results = assign_slots(day_slots, hd_pool, w_pool, assigned_today)
+    kd_results = assign_slots(day_slots, kd_pool, w_pool, assigned_today)
 
     # --- 2. 夜の枠（基本4名ずつ） ---
-        hall_night_slots = ["18:00-23:00", "18:00-23:00", "18:00-22:00", "19:00-23:00"]
-        kitchen_night_slots = ["18:00-23:00", "18:00-23:00", "18:00-22:00", "19:00-23:00"]
+    hall_night_slots = ["18:00-23:00", "18:00-23:00", "18:00-22:00", "19:00-23:00"]
+    kitchen_night_slots = ["18:00-23:00", "18:00-23:00", "18:00-22:00", "19:00-23:00"]
     
-        hn_results = assign_slots(hall_night_slots, hn_pool, w_pool, assigned_today)
-        kn_results = assign_slots(kitchen_night_slots, kn_pool, w_pool, assigned_today)
+    hn_results = assign_slots(hall_night_slots, hn_pool, w_pool, assigned_today)
+    kn_results = assign_slots(kitchen_night_slots, kn_pool, w_pool, assigned_today)
 
     # --- 結果の表示 ---
     
         # 段階的ステップ3: 名簿順に並び替えた1日シフト表の作成
-        st.subheader("3. 本日の確定シフト案（名簿順）")
+    st.subheader("3. 本日の確定シフト案（名簿順）")
 
     # 1. すべてのグループの結果を1つの辞書にまとめる
     # key: 名前, value: 時間
-        daily_schedule = {name: "" for name in ALL_NAMES}
+    daily_schedule = {name: "" for name in ALL_NAMES}
 
     # 各グループの計算結果（hd_resultsなど）から名前と時間を抜き出して辞書に入れる
     # ※ assign_slots関数の戻り値形式に合わせて処理
-        for res in hd_results + hn_results + kd_results + kn_results:
-            if res["担当者"] != "⚠️ 欠員":
+    for res in hd_results + hn_results + kd_results + kn_results:
+        if res["担当者"] != "⚠️ 欠員":
                 daily_schedule[res["担当者"]] = res["スロット"]
 
     # 2. 表示用の表（DataFrame）を作成
