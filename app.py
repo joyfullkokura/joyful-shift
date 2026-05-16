@@ -158,67 +158,75 @@ if mode == "従業員名簿管理":
                 st.dataframe(master_df, use_container_width=True)
             # --- ① 休み希望入力 ---
 # --- ① 休み希望入力（新・個別入力方式の土台） ---
-elif mode == "休み希望入力":
+# --- ① 休み希望入力（高速・セッション管理版） ---
+elif mode == "① 休み希望入力":
     st.title(f"📅 {year}年{month}月の休み希望")
 
-    # 1. スプレッドシートから現在の休み希望データを読み込む
-    # なければ名簿（ALL_NAMES）を元に真っ白な表を作る
-    r_raw = load_sheet_no_cache(REQ_SHEET, pd.DataFrame(False, index=ALL_NAMES, columns=column_names))
-    
-    # 2. データの整理：最新の名簿と同期させ、重複を消し、不足分をFalse(出勤)で埋める
-    # これにより、名簿管理で人を消せば消え、足せば自動でここにも現れます
-    req_df = r_raw.reindex(ALL_NAMES).fillna(False)
-    
-    # 3. スプレッドシートの「TRUE/FALSE」を確実にチェックボックス用の型(Bool)に変換
-    req_df = req_df.map(lambda x: str(x).upper() == "TRUE" if isinstance(x, str) else bool(x))
+    # 【重要】1. アプリを開いた瞬間に、シートのデータを「貯金箱（セッション）」に1回だけ入れる
+    # これ以降、ボタンを押してもGoogleには通信しないので爆速になります
+    state_key = f"req_data_{year}_{month}"
+    if state_key not in st.session_state:
+        with st.spinner("データを読み込んでいます..."):
+            # 初回だけ読み込み
+            r_raw = load_sheet_no_cache(REQ_SHEET, pd.DataFrame(False, index=ALL_NAMES, columns=column_names))
+            df = r_raw.reindex(ALL_NAMES).fillna(False)
+            df = df.map(lambda x: str(x).upper() == "TRUE" if isinstance(x, str) else bool(x))
+            st.session_state[state_key] = df
 
-    # 4. 全員の状況を確認できる「閲覧専用」の表を表示
+    # 現在のデータを貯金箱から取り出す
+    req_df = st.session_state[state_key]
+
     st.subheader("📊 現在の全体の休み状況（閲覧のみ）")
+    # ここも貯金箱の中身を出すだけなので一瞬です
     st.dataframe(req_df, use_container_width=True, height=400)
     
     st.divider()
 
-    # 5. 入力画面へ進むためのボタンを全員分並べる
+    # 2. 自分の名前を選択
     st.subheader("👤 自分の名前を選んで入力してください")
-    
-    # ボタンを横に4つずつ並べるための設定
     cols = st.columns(4) 
     for i, name in enumerate(ALL_NAMES):
-        # 名簿の人数分だけ、ボタンを順番に作成していく
-        # 割り切った数字で列(col)を切り替える
         with cols[i % 4]:
             if st.button(f"{name}", key=f"btn_{name}"):
-                # ボタンが押されたら「誰が編集中か」を貯金箱にメモする
+                # 名前をセットするだけ（通信なし！）
                 st.session_state.editing_user = name
-                # 6. 名前が選ばれている場合だけ、個別入力欄（カレンダー）を表示する
+
+    # 3. 名前が選ばれている場合だけ、個別入力欄を表示
     if "editing_user" in st.session_state:
         user = st.session_state.editing_user
-        st.divider()
-        st.subheader(f"📝 {user}さんの休み希望入力")
-
-        # 全体の表から、選ばれた人の行だけを抜き出す
-        # 名前をインデックスにすることで、日付の列だけが並ぶようになります
+        st.info(f"👉 **{user}** さんの行を編集中です。チェックを入れたら必ず『一時保存』を押してください。")
+        
+        # 貯金箱から自分の行だけ抜き出す
         user_row = req_df.loc[[user]]
 
-        # 選ばれた人の1行だけを編集できるエディタを表示
-        # これが実質的な「自分専用カレンダー」になります
-        edited_user_df = st.data_editor(
+        # 自分の1行だけを編集
+        edited_user_row = st.data_editor(
             user_row,
             use_container_width=True,
-            key="user_edit_panel"
+            key=f"editor_{user}"
         )
 
-        # 保存とキャンセルのボタン
-        col_s1, col_s2 = st.columns([1, 5])
+        col_s1, col_s2 = st.columns([1, 4])
         with col_s1:
-            if st.button("💾 保存", type="primary"):
-                # ここに保存のロジックを書きます（次のステップ）
-                st.success(f"{user}さんの入力を受け付けました（スプレッドシートへの保存は次のステップで実装！）")
+            if st.button("✅ 変更を確定（一時保存）"):
+                # 画面上の変更を貯金箱（セッション）に書き戻す
+                st.session_state[state_key].loc[user] = edited_user_row.loc[user]
+                st.success("手元のデータに反映しました！")
+                st.rerun()
+        
         with col_s2:
             if st.button("❌ 閉じる"):
-                # 貯金箱から名前を消すと、入力欄が消えます
                 del st.session_state.editing_user
                 st.rerun()
+
+    # 4. 最後にまとめてGoogleスプレッドシートへ送るボタン
+    st.divider()
+    st.markdown("### 最後に以下のボタンで送信を完了させてください")
+    if st.button("💾 全員の変更をまとめてスプレッドシートに最終保存", type="primary", use_container_width=True):
+        with st.spinner("スプレッドシートへ一括送信中..."):
+            if save_sheet_robust(st.session_state[state_key], REQ_SHEET):
+                st.success("✅ 全員の休み希望をスプレッドシートに反映しました！")
+                st.balloons() # お祝いの風船
     
 elif mode == "シフト自動生成（案）":
     
