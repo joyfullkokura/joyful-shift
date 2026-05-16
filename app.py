@@ -274,30 +274,36 @@ elif mode == "シフト自動生成（案）":
     kn_results = assign_slots(kitchen_night_slots, kn_pool, w_pool, assigned_today)
 
     # --- 結果の表示 ---
-    
-        # 段階的ステップ3: 名簿順に並び替えた1日シフト表の作成
     st.subheader("3. 本日の確定シフト案（名簿順）")
 
-    # 1. すべてのグループの結果を1つの辞書にまとめる
-    # key: 名前, value: 時間
+    # 1. すべてのスタッフが空欄の状態の「今日の予定表」を準備
+    # ALL_NAMES（名簿）を基準にするので、順番が崩れません
     daily_schedule = {name: "" for name in ALL_NAMES}
 
-    # 各グループの計算結果（hd_resultsなど）から名前と時間を抜き出して辞書に入れる
-    # ※ assign_slots関数の戻り値形式に合わせて処理
-    for res in hd_results + hn_results + kd_results + kn_results:
+    # 2. 算出した4つのグループの結果をひとつに合体させる
+    # hd_results, hn_results などの計算結果をすべてスキャンします
+    all_results = hd_results + hn_results + kd_results + kn_results
+
+    # 3. 誰がどの枠に入ったか、予定表（daily_schedule）を埋めていく
+    for res in all_results:
+        # もし担当者が「欠員」でなければ、その人の名前に時間を書き込む
         if res["担当者"] != "⚠️ 欠員":
-                daily_schedule[res["担当者"]] = res["スロット"]
+            # スロット（18:00-23:00など）をその人の予定に入れる
+            daily_schedule[res["担当者"]] = res["スロット"]
 
-    # 2. 表示用の表（DataFrame）を作成
-    # ALL_NAMES（名簿）を元に作るので、自動的に名簿順になります
-        final_view_df = pd.DataFrame([
-        {"名前": name, "シフト時間": daily_schedule[name]} 
-        for name in ALL_NAMES
-    ])
+    # 4. 表示用のデータ表（DataFrame）を作成
+    # 辞書の中身を「名前」と「シフト時間」の列にして表にします
+    final_view_data = []
+    for name in ALL_NAMES:
+        final_view_data.append({
+            "スタッフ名": name,
+            "本日のシフト時間": daily_schedule[name]
+        })
+    
+    final_view_df = pd.DataFrame(final_view_data)
 
-    # 3. 画面に表示
-        st.write("📖 今日の全スタッフ配置一覧")
-        st.table(final_view_df)
+    # 5. 画面に表示
+    st.write("📖 名簿の順番通りに並べた一覧表です")
+    st.dataframe(final_view_df, use_container_width=True, hide_index=True)
 
-        st.info("💡 名簿の順番通りに並び、シフトがない人は空欄になっています。")
-        
+    st.info("💡 グレーの空欄の人は、本日のシフトには割り当てられていません。")
