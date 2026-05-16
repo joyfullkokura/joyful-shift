@@ -159,74 +159,74 @@ if mode == "従業員名簿管理":
             # --- ① 休み希望入力 ---
 # --- ① 休み希望入力（新・個別入力方式の土台） ---
 # --- ① 休み希望入力（高速・セッション管理版） ---
-elif mode == "休み希望入力":
+# --- ① 休み希望入力（自分の行だけ狙い撃ち保存版） ---
+if mode == "休み希望入力":
     st.title(f"📅 {year}年{month}月の休み希望")
 
-    # 【重要】1. アプリを開いた瞬間に、シートのデータを「貯金箱（セッション）」に1回だけ入れる
-    # これ以降、ボタンを押してもGoogleには通信しないので爆速になります
-    state_key = f"req_data_{year}_{month}"
-    if state_key not in st.session_state:
-        with st.spinner("データを読み込んでいます..."):
-            # 初回だけ読み込み
-            r_raw = load_sheet_no_cache(REQ_SHEET, pd.DataFrame(False, index=ALL_NAMES, columns=column_names))
-            df = r_raw.reindex(ALL_NAMES).fillna(False)
-            df = df.map(lambda x: str(x).upper() == "TRUE" if isinstance(x, str) else bool(x))
-            st.session_state[state_key] = df
-
-    # 現在のデータを貯金箱から取り出す
-    req_df = st.session_state[state_key]
+    # 1. 閲覧用の全体データを読み込む（10秒キャッシュで高速表示）
+    # ※ load_sheet_cached 関数は ttl=10 くらいに設定されている前提
+    r_raw = load_sheet_no_cache(REQ_SHEET, pd.DataFrame(False, index=ALL_NAMES, columns=column_names))
+    req_df = r_raw.reindex(ALL_NAMES).fillna(False)
+    req_df = req_df.map(lambda x: str(x).upper() == "TRUE" if isinstance(x, str) else bool(x))
 
     st.subheader("📊 現在の全体の休み状況（閲覧のみ）")
-    # ここも貯金箱の中身を出すだけなので一瞬です
-    st.dataframe(req_df, use_container_width=True, height=400)
+    st.dataframe(req_df, use_container_width=True, height=300)
     
     st.divider()
 
     # 2. 自分の名前を選択
-    st.subheader("👤 自分の名前を選んで入力してください")
+    st.subheader("👤 あなたの名前をタップしてください")
     cols = st.columns(4) 
     for i, name in enumerate(ALL_NAMES):
         with cols[i % 4]:
             if st.button(f"{name}", key=f"btn_{name}"):
-                # 名前をセットするだけ（通信なし！）
                 st.session_state.editing_user = name
 
-    # 3. 名前が選ばれている場合だけ、個別入力欄を表示
+    # 3. 自分の行だけを編集・保存するエリア
     if "editing_user" in st.session_state:
         user = st.session_state.editing_user
-        st.info(f"👉 **{user}** さんの行を編集中です。チェックを入れたら必ず『一時保存』を押してください。")
+        st.success(f"📝 **{user}** さん専用の入力欄です")
         
-        # 貯金箱から自分の行だけ抜き出す
+        # 今のデータから自分の1行だけを抜き出す
         user_row = req_df.loc[[user]]
 
-        # 自分の1行だけを編集
+        # 編集エディタ
         edited_user_row = st.data_editor(
             user_row,
             use_container_width=True,
             key=f"editor_{user}"
         )
 
-        col_s1, col_s2 = st.columns([1, 4])
-        with col_s1:
-            if st.button("✅ 変更を確定（一時保存）"):
-                # 画面上の変更を貯金箱（セッション）に書き戻す
-                st.session_state[state_key].loc[user] = edited_user_row.loc[user]
-                st.success("手元のデータに反映しました！")
-                st.rerun()
-        
-        with col_s2:
-            if st.button("❌ 閉じる"):
-                del st.session_state.editing_user
-                st.rerun()
-
-    # 4. 最後にまとめてGoogleスプレッドシートへ送るボタン
-    st.divider()
-    st.markdown("### 最後に以下のボタンで送信を完了させてください")
-    if st.button("💾 全員の変更をまとめてスプレッドシートに最終保存", type="primary", use_container_width=True):
-        with st.spinner("スプレッドシートへ一括送信中..."):
-            if save_sheet_robust(st.session_state[state_key], REQ_SHEET):
-                st.success("✅ 全員の休み希望をスプレッドシートに反映しました！")
-                st.balloons() # お祝いの風船
+        if st.button(f"💾 {user}さんの分だけを保存する", type="primary"):
+            with st.spinner("スプレッドシートの自分の行を更新中..."):
+                try:
+                    # 【ここが心臓部：部分更新ロジック】
+                    # スプレッドシートを直接操作する準備
+                    sh = conn.client.open_by_url(SPREADSHEET_URL).worksheet(REQ_SHEET)
+                    
+                    # A. 自分の名前がスプレッドシートの何行目にあるか探す
+                    cell = sh.find(user)
+                    if cell:
+                        row_index = cell.row # 行番号を取得（例：15行目）
+                        
+                        # B. 保存するデータ（True/False）を [TRUE, FALSE...] のリストにする
+                        new_values = edited_user_row.iloc[0].tolist()
+                        # 文字列の "TRUE" "FALSE" に変換
+                        new_values_str = ["TRUE" if val else "FALSE" for val in new_values]
+                        
+                        # C. その行の2列目（1日）から32列目（31日）までをピンポイント更新！
+                        # range は "B15:AF15" のような形式になります
+                        range_label = f"B{row_index}:{sh.get_addr_int(row_index, len(column_names)+1)}"
+                        sh.update(range_label, [new_values_str])
+                        
+                        st.success(f"✅ {user}さんのデータを更新しました！")
+                        st.cache_data.clear() # 記憶をリセット
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("スプレッドシートにあなたの名前が見つかりませんでした。名簿管理を確認してください。")
+                except Exception as e:
+                    st.error(f"保存エラー: {e}")
     
 elif mode == "シフト自動生成（案）":
     
