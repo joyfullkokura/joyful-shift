@@ -162,20 +162,26 @@ if mode == "従業員名簿管理":
 if mode == "休み希望入力":
     st.title(f"📅 {year}年{month}月の休み希望")
 
-    # 1. データの初回読み込み（貯金箱への保管）
+    # 1. データの初回読み込み（アプリを開いた時に一度だけ実行）
     state_key = f"full_req_data_{year}_{month}"
     if state_key not in st.session_state:
-        with st.spinner("スプレッドシートからデータを読み込み中..."):
-            # load_sheet_no_cache 関数を使用して読み込み
+        with st.spinner("最新データを読み込み中..."):
+            # スプレッドシートから読み込み
             r_raw = load_sheet_no_cache(REQ_SHEET, pd.DataFrame(False, index=ALL_NAMES, columns=column_names))
-            df = r_raw.reindex(ALL_NAMES).fillna(False)
+            
+            # 【重要】列の順番を強制的に column_names (1日, 2日...) に固定する（日付消失対策）
+            df = r_raw.reindex(index=ALL_NAMES, columns=column_names).fillna(False)
+            
+            # 文字列の "TRUE" などを本物のチェックマーク(True/False)に変換
             df = df.map(lambda x: str(x).upper() == "TRUE" if isinstance(x, str) else bool(x))
             st.session_state[state_key] = df
 
+    # 現在のデータを「貯金箱」から取り出す
     req_df = st.session_state[state_key]
 
-    st.subheader("📊 現在の全体の休み状況（閲覧のみ）")
-    st.dataframe(req_df, use_container_width=True, height=300)
+    # 全体の状況を表示（閲覧のみ）
+    st.subheader("📊 現在の全体の状況")
+    st.dataframe(req_df, use_container_width=True, height=250)
     
     st.divider()
 
@@ -184,21 +190,25 @@ if mode == "休み希望入力":
     cols = st.columns(4) 
     for i, name in enumerate(ALL_NAMES):
         with cols[i % 4]:
+            # 自分が選ばれているボタンは色を変えるなどの視覚効果（オプション）
             if st.button(f"{name}", key=f"btn_{name}"):
                 st.session_state.editing_user = name
 
     # 3. 自分の行だけを編集・保存するエリア
     if "editing_user" in st.session_state:
         user = st.session_state.editing_user
-        st.info(f"📝 **{user}** さんの休み希望を入力中...")
+        st.markdown(f"### 📝 **{user}** さんの入力欄")
+        st.caption("休みたい日にチェックを入れて、下の保存ボタンを押してください。")
         
-        # 貯金箱から自分の行だけ抜き出す
-        user_row = req_df.loc[[user]]
+        # 貯金箱から自分の1行だけを抜き出す
+        # columns=column_names を指定することで列の順番を死守する
+        user_row = req_df.loc[[user], column_names]
 
+        # 編集エディタ（ここでの操作はまだGoogleには飛ばないから速い！）
         edited_user_row = st.data_editor(
             user_row,
             use_container_width=True,
-            key=f"editor_{user}"
+            key=f"editor_{user}_{year}_{month}" # 月ごとにキーを変えて衝突防止
         )
 
         # 保存・閉じるボタン
@@ -206,33 +216,34 @@ if mode == "休み希望入力":
         
         with c_save:
             if st.button(f"💾 {user}さんの分を保存", type="primary"):
-                with st.spinner("最新データと合体させて保存中..."):
-                    # 【ここが修正の核心】
-                    # ① まず、今この瞬間のスプレッドシートの「全員分」を読み直す（他人の最新入力を含む）
+                with st.spinner("スプレッドシートを更新中..."):
+                    # ① 保存直前に、他人の入力も入った最新の「全員分」を読み直す
                     latest_all_df = load_sheet_no_cache(REQ_SHEET, pd.DataFrame(False, index=ALL_NAMES, columns=column_names))
-                    latest_all_df = latest_all_df.reindex(ALL_NAMES).fillna(False)
                     
-                    # ② その最新の表の「自分の行だけ」を、今画面で入力した内容に差し替える
-                    # 他の人の行は、①で読み込んだ最新の状態が維持されます
+                    # ② 列と行を名簿・カレンダー通りに整える
+                    latest_all_df = latest_all_df.reindex(index=ALL_NAMES, columns=column_names).fillna(False)
+                    
+                    # ③ その最新の表の「自分の行」だけを、今画面で入力した内容に差し替える
                     latest_all_df.loc[user] = edited_user_row.loc[user]
                     
-                    # ③ 完成した「合体版」を、標準的な save_sheet_robust で保存する
-                    # これなら open_by_url のエラーは出ません
+                    # ④ 差し替えた「合体版」を保存する
+                    # save_sheet_robust は index.name="名前" にして reset_index する機能がある前提
                     if save_sheet_robust(latest_all_df, REQ_SHEET):
-                        # 貯金箱も最新に更新
+                        # 貯金箱の中身も最新に更新（これで画面の表も即座に変わる）
                         st.session_state[state_key] = latest_all_df
                         st.success(f"✅ {user}さんのデータを保存しました！")
                         time.sleep(1)
+                        # editing_user を消さずに残すことで連続入力しやすくする
                         st.rerun()
         
         with c_close:
-            if st.button("❌ 入力を閉じる"):
+            if st.button("❌ 閉じる"):
                 del st.session_state.editing_user
                 st.rerun()
 
     # 更新ボタン（サイドバー）
     st.sidebar.divider()
-    if st.sidebar.button("🔄 全体表を最新に更新"):
+    if st.sidebar.button("🔄 最新の情報に更新"):
         if state_key in st.session_state:
             del st.session_state[state_key]
         st.rerun()
