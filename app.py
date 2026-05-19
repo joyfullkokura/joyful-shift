@@ -167,8 +167,8 @@ if mode == "休み希望入力":
         <style>
         /* ボタン（stButton）の中にある実際のボタン要素（button）を指定します */
         div.stButton > button {
-            font-size: 12px !important;   /* 文字の大きさを12ピクセルに（標準は16pxくらい） */
-            height: 28px !important;     /* ボタンの高さを28ピクセルに（標準は40pxくらい） */
+            font-size: 5px !important;   /* 文字の大きさを12ピクセルに（標準は16pxくらい） */
+            height: 10px !important;     /* ボタンの高さを28ピクセルに（標準は40pxくらい） */
             padding-top: 0px !important;  /* 上の余白をゼロに */
             padding-bottom: 0px !important; /* 下の余白をゼロに */
             margin-bottom: 2px !important; /* ボタン同士の隙間を狭く */
