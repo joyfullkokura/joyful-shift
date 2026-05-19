@@ -183,7 +183,19 @@ if mode == "休み希望入力":
     
     # st.dataframe を使うことで、スマホでも見やすい閲覧専用の表になります
     st.dataframe(display_df, use_container_width=True, height=600)
+# 2. 左側の列（col_btn）の中に、これから書くものを表示しろという指示です。
+    with col_btn:
+        st.write("📝 入力") # 見出し
 
+    # 3. 名簿（ALL_NAMES）に入っている名前を一つずつ取り出してループさせます。
+        for name in ALL_NAMES:
+        
+        # 4. その人の名前が書かれたボタンを実際に作ります。
+        # 全員のボタンを区別するために、keyにはその人の名前を入れます。
+            if st.button(f"✏️ {name}", key=f"sel_{name}"):
+            
+            # 5. ボタンが押されたら、貯金箱（session_state）に「この人を編集中」とメモします。
+                st.session_state.editing_user = name
 
     
 elif mode == "シフト自動生成（案）":
