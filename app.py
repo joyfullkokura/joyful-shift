@@ -187,16 +187,6 @@ if mode == "休み希望入力":
     with col_btn:
         st.write("📝 入力") # 見出し
     # 1. st.markdown（マークダウン）を使って、HTMLの中にデザインの指示を書き込みます。
-    
-    # 3. 名簿（ALL_NAMES）に入っている名前を一つずつ取り出してループさせます。
-        for name in ALL_NAMES:
-        
-        # 4. その人の名前が書かれたボタンを実際に作ります。
-        # 全員のボタンを区別するために、keyにはその人の名前を入れます。
-            if st.button(f"✏️ {name}", key=f"sel_{name}"):
-            
-            # 5. ボタンが押されたら、貯金箱（session_state）に「この人を編集中」とメモします。
-                st.session_state.editing_user = name
         st.markdown("""
         <style>
         /* ボタン（stButton）の中にある実際のボタン要素（button）を指定します */
@@ -209,6 +199,15 @@ if mode == "休み希望入力":
         }
         </style>
     """, unsafe_allow_html=True)
+        # 3. 名簿（ALL_NAMES）に入っている名前を一つずつ取り出してループさせます。
+        for name in ALL_NAMES:
+        
+        # 4. その人の名前が書かれたボタンを実際に作ります。
+        # 全員のボタンを区別するために、keyにはその人の名前を入れます。
+            if st.button(f"✏️ {name}", key=f"sel_{name}"):
+            
+            # 5. ボタンが押されたら、貯金箱（session_state）に「この人を編集中」とメモします。
+                st.session_state.editing_user = name
     
 elif mode == "シフト自動生成（案）":
     
