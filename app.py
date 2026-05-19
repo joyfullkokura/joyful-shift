@@ -162,9 +162,8 @@ if mode == "従業員名簿管理":
 if mode == "休み希望入力":
     st.title(f"📅 {year}年{month}月の休み希望")
     # 1. 画面を左右の2つの列（カラム）に分割します。比率は 1対4 です。
-    col_btn, col_view = st.columns([1, 4])
+    col_btn, col_view = st.columns([1, 6])
     with col_view:
-        st.write("📝 入力")
     # 1. スプレッドシートからデータを読み込む
     # ※ load_sheet_no_cache(シート名, 読み込めなかった時の予備) を使います
         df_raw = load_sheet_no_cache(REQ_SHEET, pd.DataFrame())
