@@ -185,7 +185,7 @@ if mode == "休み希望入力":
         st.dataframe(display_df, use_container_width=True, height=600)
 # 2. 左側の列（col_btn）の中に、これから書くものを表示しろという指示です。
     with col_btn:
-        st.write("📝 入力                      ") # 見出し
+        st.write("📝 入力                      .") # 見出し
     # 1. st.markdown（マークダウン）を使って、HTMLの中にデザインの指示を書き込みます。
         st.markdown("""
     <style>
