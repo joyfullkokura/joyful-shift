@@ -188,17 +188,23 @@ if mode == "休み希望入力":
         st.write("📝 入力") # 見出し
     # 1. st.markdown（マークダウン）を使って、HTMLの中にデザインの指示を書き込みます。
         st.markdown("""
-        <style>
-        /* ボタン（stButton）の中にある実際のボタン要素（button）を指定します */
-        div.stButton > button {
-            font-size: 12px !important;   /* 文字の大きさを12ピクセルに（標準は16pxくらい） */
-            height: 30px !important;     /* ボタンの高さを28ピクセルに（標準は40pxくらい） */
-            padding-top: 0px !important;  /* 上の余白をゼロに */
-            padding-bottom: 0px !important; /* 下の余白をゼロに */
-            margin-bottom: 2px !important; /* ボタン同士の隙間を狭く */
-        }
-        </style>
-    """, unsafe_allow_html=True)
+    <style>
+    /* 全てのボタンに対して強制的に適用する設定 */
+    .stButton > button {
+        font-size: 11px !important;   /* 文字をさらに小さく */
+        height: 24px !important;     /* 高さをかなり低く */
+        line-height: 24px !important; /* 文字を中央に */
+        min-height: 24px !important;
+        padding: 0px 5px !important;  /* 左右の余白を最小限に */
+        margin: 0px !important;
+        border-radius: 4px !important; /* 角の丸みを少し残す */
+    }
+    /* ボタンを囲んでいる枠自体の余白も削る */
+    .stButton {
+        margin-bottom: -10px !important; /* 下のボタンとの隙間を詰める */
+    }
+    </style>
+""", unsafe_allow_html=True)
         # 3. 名簿（ALL_NAMES）に入っている名前を一つずつ取り出してループさせます。
         for name in ALL_NAMES:
         
