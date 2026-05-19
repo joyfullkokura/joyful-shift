@@ -163,26 +163,27 @@ if mode == "休み希望入力":
     st.title(f"📅 {year}年{month}月の休み希望")
     # 1. 画面を左右の2つの列（カラム）に分割します。比率は 1対4 です。
     col_btn, col_view = st.columns([1, 4])
-
+    with col_view:
+        st.write("📝 入力")
     # 1. スプレッドシートからデータを読み込む
     # ※ load_sheet_no_cache(シート名, 読み込めなかった時の予備) を使います
-    df_raw = load_sheet_no_cache(REQ_SHEET, pd.DataFrame())
+        df_raw = load_sheet_no_cache(REQ_SHEET, pd.DataFrame())
 
     # 2. データの整形
-    if df_raw.empty:
+        if df_raw.empty:
         # シートが空っぽ、または存在しない場合は全員分「空」の表を作る
-        display_df = pd.DataFrame(False, index=ALL_NAMES, columns=column_names)
-    else:
+            display_df = pd.DataFrame(False, index=ALL_NAMES, columns=column_names)
+        else:
         # 【重要】今の名簿順(ALL_NAMES)と日付(column_names)に強制的に揃える
         # これにより、スプレッドシートがズレていても表は綺麗に表示されます
-        display_df = df_raw.reindex(index=ALL_NAMES, columns=column_names).fillna(False)
+            display_df = df_raw.reindex(index=ALL_NAMES, columns=column_names).fillna(False)
 
     # 3. 画面に表示
-    st.subheader("📊 全体の休み状況（閲覧のみ）")
-    st.info("💡 ここは確認用です。入力機能は次のステップで追加します。")
+        st.subheader("📊 全体の休み状況（閲覧のみ）")
+        st.info("💡 ここは確認用です。入力機能は次のステップで追加します。")
     
     # st.dataframe を使うことで、スマホでも見やすい閲覧専用の表になります
-    st.dataframe(display_df, use_container_width=True, height=600)
+        st.dataframe(display_df, use_container_width=True, height=600)
 # 2. 左側の列（col_btn）の中に、これから書くものを表示しろという指示です。
     with col_btn:
         st.write("📝 入力") # 見出し
