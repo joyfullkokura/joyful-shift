@@ -162,20 +162,6 @@ if mode == "従業員名簿管理":
 if mode == "休み希望入力":
     st.title(f"📅 {year}年{month}月の休み希望")
     # 1. 画面を左右の2つの列（カラム）に分割します。比率は 1対4 です。
-    # 1. st.markdown（マークダウン）を使って、HTMLの中にデザインの指示を書き込みます。
-    st.markdown("""
-        <style>
-        /* ボタン（stButton）の中にある実際のボタン要素（button）を指定します */
-        div.stButton > button {
-            font-size: 5px !important;   /* 文字の大きさを12ピクセルに（標準は16pxくらい） */
-            height: 10px !important;     /* ボタンの高さを28ピクセルに（標準は40pxくらい） */
-            padding-top: 0px !important;  /* 上の余白をゼロに */
-            padding-bottom: 0px !important; /* 下の余白をゼロに */
-            margin-bottom: 2px !important; /* ボタン同士の隙間を狭く */
-        }
-        </style>
-    """, unsafe_allow_html=True)
-    
     col_btn, col_view = st.columns([1, 6])
     with col_view:
     # 1. スプレッドシートからデータを読み込む
@@ -200,7 +186,19 @@ if mode == "休み希望入力":
 # 2. 左側の列（col_btn）の中に、これから書くものを表示しろという指示です。
     with col_btn:
         st.write("📝 入力") # 見出し
-
+    # 1. st.markdown（マークダウン）を使って、HTMLの中にデザインの指示を書き込みます。
+        st.markdown("""
+           <style>
+            /* ボタン（stButton）の中にある実際のボタン要素（button）を指定します */
+            div.stButton > button {
+                font-size: 5px !important;   /* 文字の大きさを12ピクセルに（標準は16pxくらい） */
+                height: 10px !important;     /* ボタンの高さを28ピクセルに（標準は40pxくらい） */
+                padding-top: 0px !important;  /* 上の余白をゼロに */
+                padding-bottom: 0px !important; /* 下の余白をゼロに */
+            margin-bottom: 2px !important; /* ボタン同士の隙間を狭く */
+            }
+            </style>
+        """, unsafe_allow_html=True)
     # 3. 名簿（ALL_NAMES）に入っている名前を一つずつ取り出してループさせます。
         for name in ALL_NAMES:
         
