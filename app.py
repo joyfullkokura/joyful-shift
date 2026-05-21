@@ -179,20 +179,20 @@ if mode == "休み希望入力":
 
     # 3. 画面に表示
         st.subheader("📊 全体の休み状況（閲覧のみ）")
-        st.info("💡 ここは確認用です。入力機能は次のステップで追加します。")
+        st.info("💡 ")
     
     # st.dataframe を使うことで、スマホでも見やすい閲覧専用の表になります
         st.dataframe(display_df, use_container_width=True, height=600)
 # 2. 左側の列（col_btn）の中に、これから書くものを表示しろという指示です。
     with col_btn:
-        st.write("📝 入力                      .") # 見出し
+        st.write("📝 下のボタンから自分の名前を選択し休み希望を入力してください⇩") # 見出し
     # 1. st.markdown（マークダウン）を使って、HTMLの中にデザインの指示を書き込みます。
         st.markdown("""
     <style>
     /* 全てのボタンに対して強制的に適用する設定 */
     .stButton > button {
         font-size: 11px !important;   /* 文字をさらに小さく */
-        height: 24px !important;     /* 高さをかなり低く */
+        height: 30px !important;     /* 高さをかなり低く */
         line-height: 24px !important; /* 文字を中央に */
         min-height: 24px !important;
         padding: 0px 5px !important;  /* 左右の余白を最小限に */
@@ -210,11 +210,44 @@ if mode == "休み希望入力":
         
         # 4. その人の名前が書かれたボタンを実際に作ります。
         # 全員のボタンを区別するために、keyにはその人の名前を入れます。
-            if st.button(f"✏️ {name}", key=f"sel_{name}"):
+            if st.button(f" {name}", key=f"sel_{name}"):
             
             # 5. ボタンが押されたら、貯金箱（session_state）に「この人を編集中」とメモします。
                 st.session_state.editing_user = name
-    
+# --- 修正版：個別入力エリアを「フォーム」で囲む ---
+if "editing_user" in st.session_state:
+    user = st.session_state.editing_user
+    st.divider()
+    st.header(f"📝 {user} さんの入力画面")
+
+    # 1. フォームという「ひとまとめの枠」を作ります
+    with st.form(key="my_individual_form"):
+        
+        # 2. この枠の中にある間は、チェックを入れても「読み直し」が発生しません！
+        user_row = display_df.loc[[user]]
+        edited_user_df = st.data_editor(
+            user_row, 
+            use_container_width=True, 
+            key="individual_editor"
+        )
+
+        # 3. フォーム専用の「送信ボタン」を作ります
+        # これを押した瞬間だけ、プログラムが動き出します
+        submit_button = st.form_submit_button(label="💾 この内容でスプレッドシートに保存")
+
+        if submit_button:
+            with st.spinner("スプレッドシートを更新中..."):
+                latest_all_df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=REQ_SHEET, ttl=0)
+                latest_all_df = latest_all_df.set_index(latest_all_df.columns[0])
+                latest_all_df.index = latest_all_df.index.astype(str).str.strip()
+                latest_all_df.loc[user] = edited_user_df.iloc[0]
+                if save_sheet_robust(latest_all_df, REQ_SHEET):
+                    if f"req_data_{year}_{month}" in st.session_state:
+                        del st.session_state[f"req_data_{year}_{month}"]
+                    del st.session_state.editing_user
+                    st.success(f"✅ {user} さんの休み希望を保存しました！")
+                    time.sleep(1) # メッセージを読ませるために1秒待機
+                    st.rerun()
 elif mode == "シフト自動生成（案）":
     
     # --- ここに新しい「シフト作成」のプログラムを書いていく ---
