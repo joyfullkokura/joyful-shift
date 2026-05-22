@@ -92,12 +92,25 @@ def load_sheet_cached(worksheet_name):
 
 # データを保存するための「道具（関数）」
 def save_sheet_robust(df, worksheet_name):
+    """データを保存する。インデックス（名前）を確実に列に戻して保存する。"""
     try:
-        # 保存するときに「名前」などの列を整理して書き込む
-        conn.update(spreadsheet=SPREADSHEET_URL, worksheet=worksheet_name, data=df)
-        st.cache_data.clear() # 古い記憶を消去
+        # 1. スタイル設定（色）がついている場合は、純粋なデータだけを取り出す
+        if hasattr(df, 'data'):
+            df = df.data
+        
+        # 2. データのコピーを作り、インデックス（名前）を1列目に戻す
+        # これをしないと、保存するたびに「名前」の列が消えて日付がズレます
+        save_df = df.reset_index()
+        
+        # 3. True/Falseを、Googleが数字の1/0に変えないように「文字」として送る
+        save_df = save_df.map(lambda x: "TRUE" if x is True else ("FALSE" if x is False else x))
+        
+        # 4. スプレッドシートを更新
+        conn.update(spreadsheet=SPREADSHEET_URL, worksheet=worksheet_name, data=save_df)
+        st.cache_data.clear()
         return True
-    except:
+    except Exception as e:
+        st.error(f"保存エラー: {e}")
         return False
 def save_master(df):
     # 名前が空の行を削除
@@ -156,7 +169,7 @@ if mode == "従業員名簿管理":
             st.write("### 現在の名簿（閲覧のみ）")
             if not master_df.empty:
                 st.dataframe(master_df, use_container_width=True)
-            # --- ① 休み希望入力 ---
+            
 
 # --- ① 休み希望入力（安定・部分更新版） ---
 if mode == "休み希望入力":
@@ -167,7 +180,8 @@ if mode == "休み希望入力":
     # 1. スプレッドシートからデータを読み込む
     # ※ load_sheet_no_cache(シート名, 読み込めなかった時の予備) を使います
         df_raw = load_sheet_no_cache(REQ_SHEET, pd.DataFrame())
-
+        # もともとの読み込みコードのすぐ下にこれを追加
+        req_df = df_raw.map(lambda x: str(x) in ["1", "1.0", "TRUE"])
     # 2. データの整形
         if df_raw.empty:
         # シートが空っぽ、または存在しない場合は全員分「空」の表を作る
@@ -178,11 +192,37 @@ if mode == "休み希望入力":
             display_df = df_raw.reindex(index=ALL_NAMES, columns=column_names).fillna(False)
 
     # 3. 画面に表示
-        st.subheader("📊 全体の休み状況（閲覧のみ）")
-        st.info("💡 ")
-    
+        st.info("毎月20日には入力してね ")
+        
     # st.dataframe を使うことで、スマホでも見やすい閲覧専用の表になります
-        st.dataframe(display_df, use_container_width=True, height=600)
+        # column_names（1(金)など）の列をすべてチェックボックスに設定する
+        config = {col: st.column_config.CheckboxColumn(col, width="small") for col in column_names}
+
+# 表を表示する（configを渡す）
+        # --- ここから書き換え ---
+        if pw == "1234":
+            st.subheader(" 管理者モード：全員分を編集")
+            # 1. フォームの枠で囲むことで、チェックのたびに読み込みが走るのを防ぎます
+            with st.form(key="admin_bulk_edit_form"):
+                edited_all = st.data_editor(
+                    req_df, 
+                    column_config=config,
+                    use_container_width=True, 
+                    height=600,
+                    key="admin_bulk_editor"
+                )
+                # 2. 専用の保存ボタン。これを押すまでスプレッドシートへは送信されません
+                if st.form_submit_button("💾 全員の変更を一括保存する"):
+                    with st.spinner("スプレッドシートを更新中..."):
+                        if save_sheet_robust(edited_all, REQ_SHEET):
+                            st.success("✅ 全員分の休み希望を上書き保存しました！")
+                            st.cache_data.clear() 
+                            st.rerun()
+        else:
+            # パスワードを入れていない時は、今まで通り閲覧専用（または編集不可）で表示
+            st.subheader("📊 全体の休み状況（閲覧のみ）")
+            st.data_editor(req_df, column_config=config, use_container_width=True, height=600, disabled=True)
+        # --- 書き換えここまで ---
 # 2. 左側の列（col_btn）の中に、これから書くものを表示しろという指示です。
     with col_btn:
         st.write("📝 下のボタンから自分の名前を選択し休み希望を入力してください⇩") # 見出し
@@ -215,39 +255,54 @@ if mode == "休み希望入力":
             # 5. ボタンが押されたら、貯金箱（session_state）に「この人を編集中」とメモします。
                 st.session_state.editing_user = name
 # --- 修正版：個別入力エリアを「フォーム」で囲む ---
-if "editing_user" in st.session_state:
-    user = st.session_state.editing_user
-    st.divider()
-    st.header(f"📝 {user} さんの入力画面")
+    if "editing_user" in st.session_state:
+        user = st.session_state.editing_user
+        st.divider()
+        st.header(f"📝 {user} さんの入力画面")
 
     # 1. フォームという「ひとまとめの枠」を作ります
-    with st.form(key="my_individual_form"):
+        with st.form(key="my_individual_form"):
         
         # 2. この枠の中にある間は、チェックを入れても「読み直し」が発生しません！
-        user_row = display_df.loc[[user]]
-        edited_user_df = st.data_editor(
-            user_row, 
-            use_container_width=True, 
-            key="individual_editor"
-        )
+            user_row = display_df.loc[[user]]
+            user_row = user_row.map(lambda x: str(x).upper() in ["TRUE", "1", "1.0"])
+            config = {col: st.column_config.CheckboxColumn(col, width="small") for col in column_names}
+            edited_user_df = st.data_editor(
+                user_row, 
+                column_config=config,
+                use_container_width=True, 
+                key="individual_editor"
+            )
 
         # 3. フォーム専用の「送信ボタン」を作ります
         # これを押した瞬間だけ、プログラムが動き出します
-        submit_button = st.form_submit_button(label="💾 この内容でスプレッドシートに保存")
+            submit_button = st.form_submit_button(label="💾 この内容でスプレッドシートに保存")
 
-        if submit_button:
-            with st.spinner("スプレッドシートを更新中..."):
-                latest_all_df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=REQ_SHEET, ttl=0)
-                latest_all_df = latest_all_df.set_index(latest_all_df.columns[0])
-                latest_all_df.index = latest_all_df.index.astype(str).str.strip()
-                latest_all_df.loc[user] = edited_user_df.iloc[0]
-                if save_sheet_robust(latest_all_df, REQ_SHEET):
-                    if f"req_data_{year}_{month}" in st.session_state:
-                        del st.session_state[f"req_data_{year}_{month}"]
-                    del st.session_state.editing_user
-                    st.success(f"✅ {user} さんの休み希望を保存しました！")
-                    time.sleep(1) # メッセージを読ませるために1秒待機
-                    st.rerun()
+            if submit_button:
+                with st.spinner("スプレッドシートを更新中..."):
+                # A. スプレッドシートから最新を読み込む
+                    latest_all_df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=REQ_SHEET, ttl=0)
+                # B. 【重要】1列目を「名前」にしてインデックスに設定
+                    first_col = latest_all_df.columns[0]
+                    latest_all_df = latest_all_df.set_index(first_col)
+                    latest_all_df.index = latest_all_df.index.astype(str).str.strip()
+
+                # C. 【重要】読み込んだ表の「列の並び」を、今のカレンダー（1日, 2日...）に強制的に固定する
+                # これにより、列が右にズレたり消えたりするのを防ぎます
+                    latest_all_df = latest_all_df.reindex(columns=column_names).fillna("FALSE")
+
+                # D. 自分の行だけを差し替える
+                    latest_all_df.loc[user] = edited_user_df.iloc[0]
+
+                # E. 修正した save_sheet_robust で保存！
+                    if save_sheet_robust(latest_all_df, REQ_SHEET):
+                    # (以下、session_stateの消去などはそのまま)
+                        if f"req_data_{year}_{month}" in st.session_state:
+                            del st.session_state[f"req_data_{year}_{month}"]
+                        del st.session_state.editing_user
+                        st.success(f"✅ {user} さんの休み希望を保存しました！")
+                        time.sleep(1)
+                        st.rerun()
 elif mode == "シフト自動生成（案）":
     
     # --- ここに新しい「シフト作成」のプログラムを書いていく ---
@@ -280,87 +335,105 @@ elif mode == "シフト自動生成（案）":
             st.write("🍳 キッチン必要枠")
             st.write(kitchen_night_slots)
 
-    st.info("次のステップで、各グループ（HN, KN, W）から人をランダムに選んでこの枠に当てはめます。")
     # 段階的ステップ2: グループごとにリストを作る
+# --- 追加箇所 A ---
+# ① スプレッドシートから休み希望（req_2026_05など）を読み込む
+    req_load = load_sheet_cached(REQ_SHEET)
+# 名前を基準に整理し、文字の"TRUE"を本物のチェック（真偽値）に直す
+    if req_load is None or req_load.empty:
+    # 読み込み失敗または空の場合、全員「出勤可能（False）」な表を準備してエラーを防ぐ
+        req_load = pd.DataFrame(False, index=ALL_NAMES, columns=column_names)
+    else:
+    # 名前の重複を消し、名簿順（ALL_NAMES）に並べ替え。足りない人はFalseで埋める
+        req_load = req_load.drop_duplicates(subset=req_load.columns[0])
+        req_load = req_load.set_index(req_load.columns[0]).reindex(ALL_NAMES).fillna(False)
+    
+    # 【ここが重要！】0/1 と TRUE/FALSE の両方に対応させる翻訳処理
+    # 値を「文字」にしてから、"TRUE" か "1" であれば True(休み) と判定する
+    req_load = req_load.map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0"])
 
+# ② 31日分の結果を保存するための「空の大きな表」を作る
+# 縦に従業員(ALL_NAMES)、横に日付(column_names)が並ぶバケツです
+    monthly_shift_df = pd.DataFrame("", index=ALL_NAMES, columns=column_names)
+    user_limits = {row["名前"]: row["週希望"] for _, row in master_df.iterrows()}
+    week_counts = {name: 0 for name in ALL_NAMES}
+    # --- 休み印（×）の事前印字 ---
+    for name in ALL_NAMES:
+        for col in column_names:
+            if req_load.at[name, col] == True:
+                monthly_shift_df.at[name, col] = "✖"
     # --- 準備：グループごとに名簿を作る ---
-    hd_pool = master_df[master_df['グループ'] == 'HD']['名前'].tolist()
-    hn_pool = master_df[master_df['グループ'] == 'HN']['名前'].tolist()
-    kd_pool = master_df[master_df['グループ'] == 'KD']['名前'].tolist()
-    kn_pool = master_df[master_df['グループ'] == 'KN']['名前'].tolist()
-    w_pool = master_df[master_df['グループ'] == 'W']['名前'].tolist()
-
-    # 全ての名簿をシャッフル（公平にするため）
-    random.shuffle(hd_pool)
-    random.shuffle(hn_pool)
-    random.shuffle(kd_pool)
-    random.shuffle(kn_pool)
-    random.shuffle(w_pool)
+    # --- 追加箇所 B ---
+    for col in column_names: 
+    # 今日の日付（数字）を取り出す
+        d = int(col.split('(')[0])
+    
+    # 1, 8, 16, 24日なら、この瞬間にカウントを0に戻す！
+        if d in [1, 8, 16, 24]:
+            week_counts = {name: 0 for name in ALL_NAMES}
+    # (ここから下の既存の「hd_pool = ...」などは、このfor文の中に含めるため右側に4マス分ズラします)
+        hd_pool = [n for n in master_df[master_df['グループ'] == 'HD']['名前'].tolist() 
+                   if not req_load.at[n, col] and week_counts[n] < int(user_limits.get(n, 0))]
+        
+        hn_pool = [n for n in master_df[master_df['グループ'] == 'HN']['名前'].tolist() 
+                   if not req_load.at[n, col] and week_counts[n] < int(user_limits.get(n, 0))]
+        
+        kd_pool = [n for n in master_df[master_df['グループ'] == 'KD']['名前'].tolist() 
+                   if not req_load.at[n, col] and week_counts[n] < int(user_limits.get(n, 0))]
+        
+        kn_pool = [n for n in master_df[master_df['グループ'] == 'KN']['名前'].tolist() 
+                   if not req_load.at[n, col] and week_counts[n] < int(user_limits.get(n, 0))]
+        
+        # 社員(W)はバイトが足りない時の調整役なので、日数の制限をかけずに常に候補に入れる
+        w_pool  = [n for n in master_df[master_df['グループ'] == 'W']['名前'].tolist() if not req_load.at[n, col]]
+       # 全ての名簿をシャッフル（公平にするため）
+        random.shuffle(hd_pool)
+        random.shuffle(hn_pool)
+        random.shuffle(kd_pool)
+        random.shuffle(kn_pool)
+        random.shuffle(w_pool)
 
     # 「今日すでにどこかの枠に割り当てられた人」をメモするリスト
-    assigned_today = []
+        assigned_today = []
 
     # 共通の「割り当て関数」を作るとミスが減ります
-    def assign_slots(slot_list, main_pool, wildcard_pool, assigned_list):
-            result = []
+        def assign_slots(slot_list, main_pool, wildcard_pool, assigned_list):
+                result = []
         # メインの担当者(HD等)と共通(W)を合体
-            combined_pool = main_pool + wildcard_pool
+                combined_pool = main_pool + wildcard_pool
         
-            for slot_time in slot_list:
+                for slot_time in slot_list:
             # まだ選ばれていない人だけを抽出（ここが引き算！）
-                available = [name for name in combined_pool if name not in assigned_list]
+                    available = [name for name in combined_pool if name not in assigned_list]
             
-                if available:
-                    picked = available[0] # 一番上の人を選ぶ
-                    result.append({"スロット": slot_time, "担当者": picked})
-                    assigned_list.append(picked) # 選ばれた人を「使用済み」に入れる
-                else:
-                    result.append({"スロット": slot_time, "担当者": "⚠️ 欠員"})
-            return result
+                    if available:
+                        picked = available[0] # 一番上の人を選ぶ
+                        result.append({"スロット": slot_time, "担当者": picked})
+                        assigned_list.append(picked) # 選ばれた人を「使用済み」に入れる
+                    else:
+                        result.append({"スロット": slot_time, "担当者": "⚠️ 欠員"})
+                return result
 
     # --- 1. 昼の枠（基本2名ずつ） ---
-    day_slots = ["10:00-18:00", "10:00-18:00"]
-    hd_results = assign_slots(day_slots, hd_pool, w_pool, assigned_today)
-    kd_results = assign_slots(day_slots, kd_pool, w_pool, assigned_today)
+        day_slots = ["10:00-18:00", "10:00-18:00"]
+        hd_results = assign_slots(day_slots, hd_pool, w_pool, assigned_today)
+        kd_results = assign_slots(day_slots, kd_pool, w_pool, assigned_today)
 
     # --- 2. 夜の枠（基本4名ずつ） ---
-    hall_night_slots = ["18:00-23:00", "18:00-23:00", "18:00-22:00", "19:00-23:00"]
-    kitchen_night_slots = ["18:00-23:00", "18:00-23:00", "18:00-22:00", "19:00-23:00"]
+        hall_night_slots = ["18:00-23:00", "18:00-23:00", "18:00-22:00", "19:00-23:00"]
+        kitchen_night_slots = ["18:00-23:00", "18:00-23:00", "18:00-22:00", "19:00-23:00"]
     
-    hn_results = assign_slots(hall_night_slots, hn_pool, w_pool, assigned_today)
-    kn_results = assign_slots(kitchen_night_slots, kn_pool, w_pool, assigned_today)
-
+        hn_results = assign_slots(hall_night_slots, hn_pool, w_pool, assigned_today)
+        kn_results = assign_slots(kitchen_night_slots, kn_pool, w_pool, assigned_today)
+# --- 追加箇所 D ---
+    # 算出した今日の全結果（hd_res + hn_res...）を、1ヶ月表の「今日の列(col)」に書き込む
+        for item in hd_results + kd_results + hn_results + kn_results:
+            if item["担当者"] != "⚠️ 欠員":
+                monthly_shift_df.at[item["担当者"], col] = item["スロット"]
+            # 出勤が決まったスタッフの今週のカウントを1増やす
+                week_counts[item["担当者"]] += 1
     # --- 結果の表示 ---
-    st.subheader("3. 本日の確定シフト案（名簿順）")
-
-    # 1. すべてのスタッフが空欄の状態の「今日の予定表」を準備
-    # ALL_NAMES（名簿）を基準にするので、順番が崩れません
-    daily_schedule = {name: "" for name in ALL_NAMES}
-
-    # 2. 算出した4つのグループの結果をひとつに合体させる
-    # hd_results, hn_results などの計算結果をすべてスキャンします
-    all_results = hd_results + hn_results + kd_results + kn_results
-
-    # 3. 誰がどの枠に入ったか、予定表（daily_schedule）を埋めていく
-    for res in all_results:
-        # もし担当者が「欠員」でなければ、その人の名前に時間を書き込む
-        if res["担当者"] != "⚠️ 欠員":
-            # スロット（18:00-23:00など）をその人の予定に入れる
-            daily_schedule[res["担当者"]] = res["スロット"]
-
-    # 4. 表示用のデータ表（DataFrame）を作成
-    # 辞書の中身を「名前」と「シフト時間」の列にして表にします
-    final_view_data = []
-    for name in ALL_NAMES:
-        final_view_data.append({
-            "スタッフ名": name,
-            "本日のシフト時間": daily_schedule[name]
-        })
+# --- 追加箇所 E ---
+    st.subheader("3. 完成した1ヶ月分のシフト案")
+    st.dataframe(monthly_shift_df, use_container_width=True)
     
-    final_view_df = pd.DataFrame(final_view_data)
-
-    # 5. 画面に表示
-    st.write("📖 名簿の順番通りに並べた一覧表です")
-    st.dataframe(final_view_df, use_container_width=True, hide_index=True)
-
-    st.info("💡 グレーの空欄の人は、本日のシフトには割り当てられていません。")
