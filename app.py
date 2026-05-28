@@ -466,32 +466,80 @@ elif mode == "シフト自動生成（案）":
         monthly_shift_df.style.map(lambda x: "background-color: #ffd1d1" if x == "✖" else ""),
         use_container_width=True
     )
-# --- Excel出力機能の追加 ---
+# --- Excel出力機能（自動計算・デザイン調整版） ---
     st.divider()
     st.subheader("📥 シフト表をダウンロード")
 
-    # 1. Excelデータをメモリ上に作成するためのバッファ（一時的な保存場所）を用意
     buffer = io.BytesIO()
-
-    # 2. PandasのExcelWriterを使って、表を書き込む
-    # 見やすさを整えるために engine='xlsxwriter' を使います
+    # 見やすさを整えるために xlsxwriter を使用
     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
         monthly_shift_df.to_excel(writer, sheet_name='シフト案')
         
-        # --- Excelの見た目を整える（オプション） ---
         workbook  = writer.book
         worksheet = writer.sheets['シフト案']
+
+        # --- 1. 書式（見た目）の設定 ---
+        # 基本（枠線＋中央揃え）
+        fmt_base = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
+        # 名前列（太字＋グレー背景）
+        fmt_name = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#F2F2F2'})
+        # ヘッダー（太字＋濃いグレー）
+        fmt_header = workbook.add_format({'bold': True, 'border': 1, 'align': 'center', 'bg_color': '#D9D9D9'})
+        # 合計列（太字＋薄い黄色）
+        fmt_total = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#FFFFCC', 'align': 'center', 'num_format': '#,##0.0'})
+        # 土曜（青）/ 日曜（赤）
+        fmt_sat = workbook.add_format({'bold': True, 'border': 1, 'align': 'center', 'bg_color': '#CCE5FF', 'font_color': '#0000FF'})
+        fmt_sun = workbook.add_format({'bold': True, 'border': 1, 'align': 'center', 'bg_color': '#FFCCCC', 'font_color': '#FF0000'})
+
+        # --- 2. 列の幅とヘッダーの設定 ---
+        worksheet.set_column(0, 0, 25, fmt_name)  # 名前列の幅
+        worksheet.set_column(1, len(column_names), 12, fmt_base) # 日付列の幅
+
+        # ヘッダーの色付け（土日判定）
+        for col_num, value in enumerate(monthly_shift_df.columns):
+            if "(土)" in value:
+                worksheet.write(0, col_num + 1, value, fmt_sat)
+            elif "(日)" in value:
+                worksheet.write(0, col_num + 1, value, fmt_sun)
+            else:
+                worksheet.write(0, col_num + 1, value, fmt_header)
+
+        # --- 3. 合計時間列の作成 (32日目の位置) ---
+        total_col_idx = len(column_names) + 1
+        worksheet.set_column(total_col_idx, total_col_idx, 15, fmt_total)
+        worksheet.write(0, total_col_idx, "合計時間", fmt_header)
+
+        # --- 4. 魔法の計算式（ここがポイント！） ---
+# --- 4. 魔法の計算式（より強力な修正版） ---
+        import xlsxwriter.utility as xl_util
         
-        # 列の幅を自動調整（名前の列を広く、時間の列を適切に）
-        worksheet.set_column(0, 0, 20)  # A列（名前）の幅を20に
-        worksheet.set_column(1, len(column_names), 15)  # B列以降（日付）の幅を15に
+        for row_num in range(1, len(ALL_NAMES) + 1):
+            excel_row = row_num + 1
+            first_day_col = "B"
+            last_day_col_letter = xl_util.xl_col_to_name(len(column_names))
+            
+            # --- 【新ロジック】 ---
+            # ハイフンで文字を分割し、右側（終了）から左側（開始）を引き算します
+            # 空欄や「✖」を飛ばし、9:00などの1桁時間にも対応する最強の数式です
+            range_ref = f"{first_day_col}{excel_row}:{last_day_col_letter}{excel_row}"
+            
+            formula = (
+                f"=SUMPRODUCT(IFERROR((TRIM(RIGHT(SUBSTITUTE({range_ref},\"-\",REPT(\" \",100)),100))"
+                f"-TRIM(LEFT(SUBSTITUTE({range_ref},\"-\",REPT(\" \",100)),100)))*24,0))"
+            )
+            
+            worksheet.write_formula(row_num, total_col_idx, formula, fmt_total)
+
+        # ウィンドウ枠を固定（名前と日付が見えるように）
+        worksheet.freeze_panes(1, 1)
 
     # 3. ダウンロードボタンを表示
     st.download_button(
-        label="📥 シフト案をExcelで保存する",
+        label="📥 合計計算付きExcelを保存する",
         data=buffer.getvalue(),
         file_name=f"joyfull_shift_{year}_{month:02}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="excel_download_with_formula" # 重複エラー防止のキー
     )
     st.divider()
     st.subheader("🚨 欠員状況のまとめ")
