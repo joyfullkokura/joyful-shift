@@ -359,6 +359,8 @@ elif mode == "シフト自動生成（案）":
     week_counts = {name: 0 for name in ALL_NAMES}
     # --- 休み印（×）の事前印字 ---
     for name in ALL_NAMES:
+        # --- 追加箇所 1 ---
+        shortage_alerts = []  # 欠員情報を入れるためのリスト（空っぽのメモ帳）
         for col in column_names:
             if req_load.at[name, col] == True:
                 monthly_shift_df.at[name, col] = "✖"
@@ -416,15 +418,58 @@ elif mode == "シフト自動生成（案）":
 
     # --- 1. 昼の枠（基本2名ずつ） ---
         day_slots = ["10:00-18:00", "10:00-18:00"]
-        hd_results = assign_slots(day_slots, hd_pool, w_pool, assigned_today)
-        kd_results = assign_slots(day_slots, kd_pool, w_pool, assigned_today)
+    
+    # 【ホール昼(HD)】: 1人目はデザートができる人を優先
+        hd_results = []
+    # 候補（HD+W）の中から、まだ選ばれておらず、デザートができる人を一人探す
+        hd_leader = next((n for n in (hd_pool + w_pool) if n not in assigned_today and master_df.set_index('名前').at[n, 'デザート']), None)
+    
+        if hd_leader:
+            hd_results.append({"スロット": "10:00-18:00", "担当者": hd_leader})
+            assigned_today.append(hd_leader)
+    
+    # 残りの枠（1つ）を普通に埋める
+        hd_results += assign_slots(["10:00-18:00"][len(hd_results):], hd_pool, w_pool, assigned_today)
+
+    # 【キッチン昼(KD)】: スキル制限なし（普通に埋める）
+        kd_results = assign_slots(["10:00-18:00", "10:00-18:00"], kd_pool, w_pool, assigned_today)
+
 
     # --- 2. 夜の枠（基本4名ずつ） ---
         hall_night_slots = ["18:00-23:00", "18:00-23:00", "18:00-22:00", "19:00-23:00"]
         kitchen_night_slots = ["18:00-23:00", "18:00-23:00", "18:00-22:00", "19:00-23:00"]
     
-        hn_results = assign_slots(hall_night_slots, hn_pool, w_pool, assigned_today)
+    # 【ホール夜(HN)】: 1人目は「レジ締め」ができる人を優先
+        hn_results = []
+        hn_leader = next((n for n in (hn_pool + w_pool) if n not in assigned_today and master_df.set_index('名前').at[n, 'レジ締め']), None)
+    
+        if hn_leader:
+            hn_results.append({"スロット": "18:00-23:00", "担当者": hn_leader})
+            assigned_today.append(hn_leader)
+    
+    # 残りの枠（3つ）を普通に埋める
+        hn_results += assign_slots(hall_night_slots[len(hn_results):], hn_pool, w_pool, assigned_today)
+
+    # 【キッチン夜(KN)】: 普通に埋める
         kn_results = assign_slots(kitchen_night_slots, kn_pool, w_pool, assigned_today)
+        # --- 追加箇所 2 ---
+        # 各ポジションの欠員数を数える処理
+        def count_shortage(results):
+            # 結果リストの中から「⚠️ 欠員」という文字が入っている数だけをカウントする
+            return sum(1 for res in results if res["担当者"] == "⚠️ 欠員")
+
+        # ホール昼、キッチン昼、ホール夜、キッチン夜、それぞれの欠員数を取得
+        hd_short = count_shortage(hd_results)
+        kd_short = count_shortage(kd_results)
+        hn_short = count_shortage(hn_results)
+        kn_short = count_shortage(kn_results)
+
+        # 欠員が1人以上いる場合、指定の形式の文章にしてリストに追加する
+        # d は現在の日付（数字）です
+        if hd_short > 0: shortage_alerts.append(f"{d}日のホールの昼に{hd_short}人の欠員")
+        if kd_short > 0: shortage_alerts.append(f"{d}日のキッチンの昼に{kd_short}人の欠員")
+        if hn_short > 0: shortage_alerts.append(f"{d}日のホールの夜に{hn_short}人の欠員")
+        if kn_short > 0: shortage_alerts.append(f"{d}日のキッチンの夜に{kn_short}人の欠員")
 # --- 追加箇所 D ---
     # 算出した今日の全結果（hd_res + hn_res...）を、1ヶ月表の「今日の列(col)」に書き込む
         for item in hd_results + kd_results + hn_results + kn_results:
@@ -436,4 +481,15 @@ elif mode == "シフト自動生成（案）":
 # --- 追加箇所 E ---
     st.subheader("3. 完成した1ヶ月分のシフト案")
     st.dataframe(monthly_shift_df, use_container_width=True)
+    # --- 追加箇所 3 ---
+    st.divider()  # 区切り線
+    st.subheader("欠員状況")
+
+    if len(shortage_alerts) > 0:
+        # 欠員がある場合は、赤いメッセージボックスに1行ずつ表示
+        for alert in shortage_alerts:
+            st.error(alert)
+    else:
+        # 欠員がゼロなら、お祝いのメッセージを表示
+        st.success("✅ 1ヶ月間、全てのシフトに欠員はありません！完璧です。")
     
