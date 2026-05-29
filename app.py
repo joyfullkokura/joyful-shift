@@ -284,25 +284,32 @@ if mode == "休み希望入力":
                 with st.spinner("スプレッドシートを更新中..."):
                 # A. スプレッドシートから最新を読み込む
                     latest_all_df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=REQ_SHEET, ttl=0)
-                # B. 【重要】1列目を「名前」にしてインデックスに設定
-                    first_col = latest_all_df.columns[0]
-                    latest_all_df = latest_all_df.set_index(first_col)
-                    latest_all_df.index = latest_all_df.index.astype(str).str.strip()
+                
+                # --- 【ここからエラー対策を追加】 ---
+                # もし読み込んだシートが空、または列がない（IndexErrorの原因）場合
+                    if latest_all_df is None or latest_all_df.empty or len(latest_all_df.columns) == 0:
+                    # その場で作った真っ白な表（req_df）を最新データとして扱う
+                        latest_all_indexed = req_df.copy()
+                    else:
+                    # データがあるなら、1列目を「名前」にしてインデックスに設定
+                        first_col = latest_all_df.columns[0]
+                        latest_all_indexed = latest_all_df.set_index(first_col)
+                        latest_all_indexed.index = latest_all_indexed.index.astype(str).str.strip()
+                    # カレンダーの列（1日〜31日）を強制的に固定してズレを防ぐ
+                        latest_all_indexed = latest_all_indexed.reindex(columns=column_names).fillna(False)
+                # --- 【ここまで】 ---
 
-                # C. 【重要】読み込んだ表の「列の並び」を、今のカレンダー（1日, 2日...）に強制的に固定する
-                # これにより、列が右にズレたり消えたりするのを防ぎます
-                    latest_all_df = latest_all_df.reindex(columns=column_names).fillna("FALSE")
+                # B. 自分の行だけを最新データに上書き
+                # latest_all_indexed（他人のデータが入った最新版）に、
+                # 今画面で編集した自分の1行（edited_user_df）をハメ込む
+                    latest_all_indexed.loc[user] = edited_user_df.iloc[0]
 
-                # D. 自分の行だけを差し替える
-                    latest_all_df.loc[user] = edited_user_df.iloc[0]
-
-                # E. 修正した save_sheet_robust で保存！
-                    if save_sheet_robust(latest_all_df, REQ_SHEET):
-                    # (以下、session_stateの消去などはそのまま)
-                        if f"req_data_{year}_{month}" in st.session_state:
-                            del st.session_state[f"req_data_{year}_{month}"]
+                # C. 修正した save_sheet_robust で保存！
+                    if save_sheet_robust(latest_all_indexed, REQ_SHEET):
+                    # 成功したら貯金箱のキャッシュを消去して画面を戻す
+                        st.session_state[state_key] = latest_all_indexed.reset_index()
                         del st.session_state.editing_user
-                        st.success(f"✅ {user} さんの休み希望を保存しました！")
+                        st.success(f"✅ {user} さんの6月の休み希望を保存しました！")
                         time.sleep(1)
                         st.rerun()
 elif mode == "シフト自動生成（案）":
