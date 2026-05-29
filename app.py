@@ -307,8 +307,8 @@ elif mode == "シフト自動生成（案）":
     st.title("📅 シフト自動生成（案）")
 
     # --- 1. 必要人数（枠数）の設定エリア ---
-    with st.expander("🛠️ 必要人数の設定（ここを開いて調整）", expanded=True):
-        st.write("曜日ごとの基本人数を設定してください。")
+    with st.expander("必要人数の設定", expanded=True):
+        st.write("基本人数を設定してください。")
         col_wd, col_we = st.columns(2)
         with col_wd:
             st.markdown("### 📅 平日 (月〜木)")
@@ -460,7 +460,6 @@ elif mode == "シフト自動生成（案）":
         shortage_alerts.extend(best_block_alerts)
 
     # --- 5. 結果の表示 ---
-    st.subheader("3. 完成した1ヶ月分のシフト案")
     # デザイン調整：×は赤く表示
     st.dataframe(
         monthly_shift_df.style.map(lambda x: "background-color: #ffd1d1" if x == "✖" else ""),
@@ -535,19 +534,19 @@ elif mode == "シフト自動生成（案）":
 
     # 3. ダウンロードボタンを表示
     st.download_button(
-        label="📥 合計計算付きExcelを保存する",
+        label="📥 Excelを出力する",
         data=buffer.getvalue(),
         file_name=f"joyfull_shift_{year}_{month:02}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         key="excel_download_with_formula" # 重複エラー防止のキー
     )
     st.divider()
-    st.subheader("🚨 欠員状況のまとめ")
+    st.subheader("欠員状況")
 
     if shortage_alerts:
         # 1. 今月の合計欠員人数を表示
         total_missing = len(shortage_alerts)
-        st.warning(f"⚠️ 今月の合計欠員人数: **{total_missing}名**")
+        st.warning(f"今月の合計欠員数: **{total_missing}枠**")
 
         # 2. 日付順に並び替える（先頭の数字を見て並び替え）
         shortage_alerts.sort(key=lambda x: int(x.split('日')[0]))
