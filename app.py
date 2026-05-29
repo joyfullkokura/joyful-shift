@@ -30,8 +30,10 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 # 1. 今日が何年何月かを取得
 if 'view_date' not in st.session_state:
-    st.session_state.view_date = date.today().replace(day=1)
-
+    # 今月の1日を取得
+    this_month_first = date.today().replace(day=1)
+    # 32日後（必ず来月になる）の1日を初期値としてセットする
+    st.session_state.view_date = (this_month_first + timedelta(days=32)).replace(day=1)
 v_date = st.session_state.view_date
 year, month = v_date.year, v_date.month
 
