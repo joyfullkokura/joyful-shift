@@ -323,7 +323,7 @@ elif mode == "シフト自動生成（案）":
             h_n_we = st.number_input("ホール夜 ", 1, 10, 4, key="h_n_we")
             k_n_we = st.number_input("キッチン夜 ", 1, 10, 4, key="k_n_we")
 
-# --- 2. データの準備（休み希望の読み込み） ---
+    # --- 2. データの準備（休み希望の読み込みと標準化） ---
     req_load_raw = load_sheet_cached(REQ_SHEET)
     if req_load_raw is None or req_load_raw.empty:
         req_load = pd.DataFrame(False, index=ALL_NAMES, columns=column_names)
@@ -332,152 +332,227 @@ elif mode == "シフト自動生成（案）":
         req_load = req_load_raw.set_index(req_load_raw.columns[0]).reindex(ALL_NAMES).fillna(False)
         req_load = req_load.map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0"])
 
-    # --- 【新規】再生成ボタンと結果の保存場所 ---
-    # 計算結果を保存するための「貯金箱」を準備
-    if "gen_shift_df" not in st.session_state:
-        st.session_state.gen_shift_df = None
-    if "gen_alerts" not in st.session_state:
-        st.session_state.gen_alerts = []
+    # --- 3. 共通の「割り当て関数」の定義 ---
+    def assign_slots(slot_list, main_pool, wildcard_pool, assigned_list):
+        result = []
+        combined_pool = main_pool + wildcard_pool
+        for slot_time in slot_list:
+            available = [name for name in combined_pool if name not in assigned_list]
+            if available:
+                picked = available[0] # 並び替え済みなので先頭を取る
+                result.append({"スロット": slot_time, "担当者": picked})
+                assigned_list.append(picked)
+            else:
+                result.append({"スロット": slot_time, "担当者": "⚠️ 欠員"})
+        return result
 
-    # ★ ここにボタンを設置
-    if st.button("🤖 シフトを自動生成・再作成する", type="primary", use_container_width=True):
-        with st.spinner("10回×4ブロックのシミュレーション中..."):
-            # --- 3. 共通の「割り当て関数」の定義 ---
-            def assign_slots(slot_list, main_pool, wildcard_pool, assigned_list):
-                result = []
-                combined_pool = main_pool + wildcard_pool
-                for slot_time in slot_list:
-                    available = [name for name in combined_pool if name not in assigned_list]
-                    if available:
-                        picked = available[0]
-                        result.append({"スロット": slot_time, "担当者": picked})
-                        assigned_list.append(picked)
-                    else:
-                        result.append({"スロット": slot_time, "担当者": "⚠️ 欠員"})
-                return result
+    # --- 4. 生成ロジック（4ブロック × 10回試行） ---
+    monthly_shift_df = pd.DataFrame("", index=ALL_NAMES, columns=column_names)
+    user_limits = {row["名前"]: row["週希望"] for _, row in master_df.iterrows()}
+    # 最終的な欠員アラートを溜めるリスト
+    shortage_alerts = []
+    # 累積の出勤数（ブロックをまたいで保持される本番用）
+    current_week_counts = {name: 0 for name in ALL_NAMES}
 
-            # --- 4. 生成ロジック本体 ---
-            monthly_shift_df = pd.DataFrame("", index=ALL_NAMES, columns=column_names)
-            user_limits = {row["名前"]: row["週希望"] for _, row in master_df.iterrows()}
-            shortage_alerts = []
-            week_counts = {name: 0 for name in ALL_NAMES}
+    # 31日を4つのブロックに分割
+    ranges = [[1, 7], [8, 15], [16, 23], [24, 31]]
+    
+    # 全スタッフに休み印をあらかじめ印字
+    for name in ALL_NAMES:
+        for col in column_names:
+            if req_load.at[name, col] == True:
+                monthly_shift_df.at[name, col] = "✖"
 
-            # 休み印の印字
-            for name in ALL_NAMES:
-                for col in column_names:
-                    if req_load.at[name, col] == True:
-                        monthly_shift_df.at[name, col] = "✖"
-
-            # ブロックごとの計算
-            ranges = [[1, 7], [8, 15], [16, 23], [24, 31]]
-            for start_d, end_d in ranges:
-                best_block_df = None
-                best_block_counts = None
-                best_block_alerts = []
-                min_shortage_in_block = 999
-                
-                for trial in range(10):
-                    t_monthly_df = monthly_shift_df.copy()
-                    t_week_counts = week_counts.copy()
-                    t_trial_alerts = []
-                    t_block_shortage = 0
-                    
-                    block_cols = [c for c in column_names if start_d <= int(c.split('(')[0]) <= end_d]
-                    
-                    for col in block_cols:
-                        assigned_today = []
-                        d = int(col.split('(')[0])
-                        d_idx = calendar.weekday(year, month, d)
-                        n_hd, n_kd, n_hn, n_kn = (h_d_we, k_d_we, h_n_we, k_n_we) if d_idx >= 4 else (h_d_wd, k_d_wd, h_n_wd, k_n_wd)
-
-                        def get_eligible(group_name, is_w=False):
-                            pool = [n for n in master_df[master_df['グループ'] == group_name]['名前'].tolist() 
-                                    if not req_load.at[n, col] and (is_w or t_week_counts[n] < int(user_limits.get(n, 3)))]
-                            random.shuffle(pool)
-                            return pool
-
-                        hd_p, hn_p, kd_p, kn_p, w_p = get_eligible('HD'), get_eligible('HN'), get_eligible('KD'), get_eligible('KN'), get_eligible('W', True)
-
-                        # ホール昼
-                        hd_res = []
-                        hd_l = next((n for n in (hd_p + w_p) if n not in assigned_today and master_df.set_index('名前').at[n, 'デザート']), None)
-                        if hd_l: hd_res.append({"スロット": "10:00-18:00", "担当者": hd_l}); assigned_today.append(hd_l)
-                        hd_res += assign_slots(["10:00-18:00"] * (n_hd - len(hd_res)), hd_p, w_p, assigned_today)
-                        # キッチン昼
-                        kd_res = assign_slots(["10:00-18:00"] * n_kd, kd_p, w_p, assigned_today)
-                        # ホール夜
-                        hn_res = []
-                        hn_l = next((n for n in (hn_p + w_p) if n not in assigned_today and master_df.set_index('名前').at[n, 'レジ締め']), None)
-                        if hn_l: hn_res.append({"スロット": "18:00-23:00", "担当者": hn_l}); assigned_today.append(hn_l)
-                        h_s = ["18:00-23:00","18:00-23:00","18:00-22:00","19:00-23:00"] + ["18:00-23:00"]*10
-                        hn_res += assign_slots(h_s[:n_hn-len(hn_res)], hn_p, w_p, assigned_today)
-                        # キッチン夜
-                        kn_res = assign_slots(h_s[:n_kn], kn_p, w_p, assigned_today)
-
-                        for res_list, pos_name in [(hd_res, "ホール昼"), (kd_res, "キッチン昼"), (hn_res, "ホール夜"), (kn_res, "キッチン夜")]:
-                            for item in res_list:
-                                if item["担当者"] == "⚠️ 欠員":
-                                    t_block_shortage += 1
-                                    t_trial_alerts.append(f"{d}日:{pos_name}に欠員")
-                                else:
-                                    t_monthly_df.at[item["担当者"], col] = item["スロット"]
-                                    t_week_counts[item["担当者"]] += 1
-
-                    if t_block_shortage < min_shortage_in_block:
-                        min_shortage_in_block = t_block_shortage
-                        best_block_df = t_monthly_df
-                        best_block_alerts = t_trial_alerts
-                        best_block_counts = t_week_counts 
-
-                monthly_shift_df = best_block_df
-                week_counts = best_block_counts
-                shortage_alerts.extend(best_block_alerts)
-
-            # 結果を貯金箱（session_state）に保存
-            st.session_state.gen_shift_df = monthly_shift_df
-            st.session_state.gen_alerts = shortage_alerts
-            st.rerun()
-
-    # --- 5. 結果の表示（貯金箱に中身があるときだけ出す） ---
-    if st.session_state.gen_shift_df is not None:
-        res_df = st.session_state.gen_shift_df
-        st.dataframe(res_df.style.map(lambda x: "background-color: #ffd1d1" if x == "✖" else ""), use_container_width=True)
-
-        # Excel出力
-        st.divider()
-        st.subheader("📥 シフト表をダウンロード")
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            res_df.to_excel(writer, sheet_name='シフト案')
-            workbook, worksheet = writer.book, writer.sheets['シフト案']
-            # (Excelの書式設定部分はそのまま使用)
-            fmt_base = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
-            fmt_name = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#F2F2F2'})
-            fmt_header = workbook.add_format({'bold': True, 'border': 1, 'align': 'center', 'bg_color': '#D9D9D9'})
-            fmt_total = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#FFFFCC', 'align': 'center', 'num_format': '#,##0.0'})
-            worksheet.set_column(0, 0, 25, fmt_name)
-            worksheet.set_column(1, len(column_names), 12, fmt_base)
-            total_col_idx = len(column_names) + 1
-            worksheet.set_column(total_col_idx, total_col_idx, 15, fmt_total)
-            worksheet.write(0, total_col_idx, "合計時間", fmt_header)
+    # ブロックごとのループ開始
+    for start_d, end_d in ranges:
+        best_block_df = None
+        best_block_counts = None
+        best_block_alerts = []
+        min_shortage_in_block = 999
+        
+        # 10回試行して最も欠員の少ないパターンを探す
+        for trial in range(10):
+            # 試行用の一時的なコピー
+            t_monthly_df = monthly_shift_df.copy()
+            t_week_counts = {name: 0 for name in ALL_NAMES} # ブロック内でのリセット用カウント
+            t_trial_alerts = []
+            t_block_shortage = 0
             
-            import xlsxwriter.utility as xl_util
-            for row_num in range(1, len(ALL_NAMES) + 1):
-                excel_row = row_num + 1
-                last_day_letter = xl_util.xl_col_to_name(len(column_names))
-                range_ref = f"B{excel_row}:{last_day_letter}{excel_row}"
-                formula = f"=SUMPRODUCT(IFERROR((TRIM(RIGHT(SUBSTITUTE({range_ref},\"-\",REPT(\" \",100)),100))-TRIM(LEFT(SUBSTITUTE({range_ref},\"-\",REPT(\" \",100)),100)))*24,0))"
-                worksheet.write_formula(row_num, total_col_idx, formula, fmt_total)
-            worksheet.freeze_panes(1, 1)
+            # このブロックに含まれる日付を取得
+            block_cols = [c for c in column_names if start_d <= int(c.split('(')[0]) <= end_d]
+            
+            for col in block_cols:
+                assigned_today = []
+                d = int(col.split('(')[0])
+                d_idx = calendar.weekday(year, month, d)
+                
+                # 曜日による人数決定
+                if d_idx >= 4: # 金土日
+                    n_hd, n_kd, n_hn, n_kn = h_d_we, k_d_we, h_n_we, k_n_we
+                else: # 月〜木
+                    n_hd, n_kd, n_hn, n_kn = h_d_wd, k_d_wd, h_n_wd, k_n_wd
 
-        st.download_button(label="📥 Excelを出力する", data=buffer.getvalue(), file_name=f"shift_{year}_{month:02}.xlsx", key="dl_btn")
+                # 候補者のリストアップ（休み希望なし 且つ その週の出勤上限に達していない人）
+                def get_eligible_staff(group_name, is_wildcard=False):
+                    pool = [n for n in master_df[master_df['グループ'] == group_name]['名前'].tolist() 
+                            if not req_load.at[n, col] and (is_wildcard or t_week_counts[n] < int(user_limits.get(n, 3)))]
+                    random.shuffle(pool)
+                    return pool
 
-        # 欠員状況の表示
-        st.divider()
-        st.subheader("欠員状況")
-        if st.session_state.gen_alerts:
-            st.warning(f"今月の合計欠員数: **{len(st.session_state.gen_alerts)}枠**")
-            st.session_state.gen_alerts.sort(key=lambda x: int(x.split('日')[0]))
-            for msg in st.session_state.gen_alerts: st.error(msg)
-        else:
-            st.success("✅ 欠員なし！")
+                hd_pool = get_eligible_staff('HD')
+                hn_pool = get_eligible_staff('HN')
+                kd_pool = get_eligible_staff('KD')
+                kn_pool = get_eligible_staff('KN')
+                w_pool = get_eligible_staff('W', is_wildcard=True) # 社員/共通は制限なし
+
+                # --- 1. ホール昼(HD)の割り当て ---
+                hd_res = []
+                hd_leader = next((n for n in (hd_pool + w_pool) if n not in assigned_today and master_df.set_index('名前').at[n, 'デザート']), None)
+                if hd_leader:
+                    hd_res.append({"スロット": "10:00-18:00", "担当者": hd_leader})
+                    assigned_today.append(hd_leader)
+                hd_res += assign_slots(["10:00-18:00"] * (n_hd - len(hd_res)), hd_pool, w_pool, assigned_today)
+
+                # --- 2. キッチン昼(KD)の割り当て ---
+                kd_res = assign_slots(["10:00-18:00"] * n_kd, kd_pool, w_pool, assigned_today)
+
+                # --- 3. ホール夜(HN)の割り当て ---
+                hn_res = []
+                hn_leader = next((n for n in (hn_pool + w_pool) if n not in assigned_today and master_df.set_index('名前').at[n, 'レジ締め']), None)
+                if hn_leader:
+                    hn_res.append({"スロット": "18:00-23:00", "担当者": hn_leader})
+                    assigned_today.append(hn_leader)
+                # 夜の椅子（スロット）リスト作成
+                hn_slots = ["18:00-23:00", "18:00-23:00", "18:00-22:00", "19:00-23:00"] # 4人までの定義
+                if n_hn > 4: hn_slots += ["18:00-23:00"] * (n_hn - 4) # 5人以上の場合は延長
+                hn_res += assign_slots(hn_slots[:n_hn-len(hn_res)], hn_pool, w_pool, assigned_today)
+
+                # --- 4. キッチン夜(KN)の割り当て ---
+                kn_slots = ["18:00-23:00", "18:00-23:00", "18:00-22:00", "19:00-23:00"]
+                if n_kn > 4: kn_slots += ["18:00-23:00"] * (n_kn - 4)
+                kn_res = assign_slots(kn_slots[:n_kn], kn_pool, w_pool, assigned_today)
+
+                # 今日の欠員カウントとデータ書き込み
+                # ポジションごとに名前をつけてチェック
+                check_list = [
+                    (hd_res, "ホール昼"), (kd_res, "キッチン昼"),
+                    (hn_res, "ホール夜"), (kn_res, "キッチン夜")
+                ]
+                for res_list, pos_name in check_list:
+                    for item in res_list:
+                        if item["担当者"] == "⚠️ 欠員":
+                            t_block_shortage += 1
+                            # ここで「1日:ホール昼に欠員」という形式にする
+                            t_trial_alerts.append(f"{d}日:{pos_name}に欠員")
+                        else:
+                            t_monthly_df.at[item["担当者"], col] = item["スロット"]
+                            t_week_counts[item["担当者"]] += 1
+            # 10回試行のうち、最も欠員が少ないものをキープ
+            if t_block_shortage < min_shortage_in_block:
+                min_shortage_in_block = t_block_shortage
+                best_block_df = t_monthly_df
+                best_block_alerts = t_trial_alerts
+                # この時点のカウントは次のブロックへは引き継がない(週リセットのため)
+                best_block_counts = t_week_counts 
+
+        # ブロック終了。ベストの結果を本番に反映
+        monthly_shift_df = best_block_df
+        shortage_alerts.extend(best_block_alerts)
+
+    # --- 5. 結果の表示 ---
+    # デザイン調整：×は赤く表示
+    st.dataframe(
+        monthly_shift_df.style.map(lambda x: "background-color: #ffd1d1" if x == "✖" else ""),
+        use_container_width=True
+    )
+# --- Excel出力機能（自動計算・デザイン調整版） ---
+    st.divider()
+    st.subheader("📥 シフト表をダウンロード")
+
+    buffer = io.BytesIO()
+    # 見やすさを整えるために xlsxwriter を使用
+    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+        monthly_shift_df.to_excel(writer, sheet_name='シフト案')
+        
+        workbook  = writer.book
+        worksheet = writer.sheets['シフト案']
+
+        # --- 1. 書式（見た目）の設定 ---
+        # 基本（枠線＋中央揃え）
+        fmt_base = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
+        # 名前列（太字＋グレー背景）
+        fmt_name = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#F2F2F2'})
+        # ヘッダー（太字＋濃いグレー）
+        fmt_header = workbook.add_format({'bold': True, 'border': 1, 'align': 'center', 'bg_color': '#D9D9D9'})
+        # 合計列（太字＋薄い黄色）
+        fmt_total = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#FFFFCC', 'align': 'center', 'num_format': '#,##0.0'})
+        # 土曜（青）/ 日曜（赤）
+        fmt_sat = workbook.add_format({'bold': True, 'border': 1, 'align': 'center', 'bg_color': '#CCE5FF', 'font_color': '#0000FF'})
+        fmt_sun = workbook.add_format({'bold': True, 'border': 1, 'align': 'center', 'bg_color': '#FFCCCC', 'font_color': '#FF0000'})
+
+        # --- 2. 列の幅とヘッダーの設定 ---
+        worksheet.set_column(0, 0, 25, fmt_name)  # 名前列の幅
+        worksheet.set_column(1, len(column_names), 12, fmt_base) # 日付列の幅
+
+        # ヘッダーの色付け（土日判定）
+        for col_num, value in enumerate(monthly_shift_df.columns):
+            if "(土)" in value:
+                worksheet.write(0, col_num + 1, value, fmt_sat)
+            elif "(日)" in value:
+                worksheet.write(0, col_num + 1, value, fmt_sun)
+            else:
+                worksheet.write(0, col_num + 1, value, fmt_header)
+
+        # --- 3. 合計時間列の作成 (32日目の位置) ---
+        total_col_idx = len(column_names) + 1
+        worksheet.set_column(total_col_idx, total_col_idx, 15, fmt_total)
+        worksheet.write(0, total_col_idx, "合計時間", fmt_header)
+
+        # --- 4. 魔法の計算式（ここがポイント！） ---
+# --- 4. 魔法の計算式（より強力な修正版） ---
+        import xlsxwriter.utility as xl_util
+        
+        for row_num in range(1, len(ALL_NAMES) + 1):
+            excel_row = row_num + 1
+            first_day_col = "B"
+            last_day_col_letter = xl_util.xl_col_to_name(len(column_names))
+            
+            # --- 【新ロジック】 ---
+            # ハイフンで文字を分割し、右側（終了）から左側（開始）を引き算します
+            # 空欄や「✖」を飛ばし、9:00などの1桁時間にも対応する最強の数式です
+            range_ref = f"{first_day_col}{excel_row}:{last_day_col_letter}{excel_row}"
+            
+            formula = (
+                f"=SUMPRODUCT(IFERROR((TRIM(RIGHT(SUBSTITUTE({range_ref},\"-\",REPT(\" \",100)),100))"
+                f"-TRIM(LEFT(SUBSTITUTE({range_ref},\"-\",REPT(\" \",100)),100)))*24,0))"
+            )
+            
+            worksheet.write_formula(row_num, total_col_idx, formula, fmt_total)
+
+        # ウィンドウ枠を固定（名前と日付が見えるように）
+        worksheet.freeze_panes(1, 1)
+
+    # 3. ダウンロードボタンを表示
+    st.download_button(
+        label="📥 Excelを出力する",
+        data=buffer.getvalue(),
+        file_name=f"joyfull_shift_{year}_{month:02}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="excel_download_with_formula" # 重複エラー防止のキー
+    )
+    st.divider()
+    st.subheader("欠員状況")
+
+    if shortage_alerts:
+        # 1. 今月の合計欠員人数を表示
+        total_missing = len(shortage_alerts)
+        st.warning(f"今月の合計欠員数: **{total_missing}枠**")
+
+        # 2. 日付順に並び替える（先頭の数字を見て並び替え）
+        shortage_alerts.sort(key=lambda x: int(x.split('日')[0]))
+
+        # 3. リストをそのまま表示（作成時に形式を整えているので、出すだけでOK）
+        for msg in shortage_alerts:
+            st.error(msg)
+    else:
+        st.success("✅ 欠員なし！全てのシフトが埋まりました。")
