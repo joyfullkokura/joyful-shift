@@ -173,72 +173,77 @@ if mode == "従業員名簿管理":
                 st.dataframe(master_df, use_container_width=True)
             
 
-# --- ① 休み希望入力（安定・部分更新版） ---
-# --- ① 休み希望入力（完全統合・改良版） ---
 if mode == "休み希望入力":
-    st.title(f"📅 {year}年{month}月の休み希望")
+    st.title(f"📅 {year}年{month}月の休み希望入力")
     
-    # セッション（貯金箱）のキーを月ごとに作成
     state_key = f"req_data_{year}_{month}"
 
-    # 1. データの読み込みと初期化（ページを開いた瞬間に一回だけ実行）
+    # 1. データの読み込みと初期化
+    # リロード（F5）された場合や、まだ貯金箱にデータがない場合のみ実行
     if state_key not in st.session_state:
-        with st.spinner("スプレッドシートから最新データを取得中..."):
-            # スプレッドシートから生のデータを読み込む
-            raw_data = load_sheet_cached(REQ_SHEET, pd.DataFrame())
+        with st.spinner("スプレッドシートから最新データを読み込み中..."):
+            # キャッシュを無視(ttl=0)して、スプレッドシートの「生の事実」を取りに行く
+            r_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=REQ_SHEET, ttl=0)
             
-            if raw_data.empty:
-                # ータがない場合は名簿を元に真っ白な表を作成
+            if r_raw is None or r_raw.empty:
+                # シートが完全に空なら、真っ白な表を新規作成
                 df = pd.DataFrame(False, index=ALL_NAMES, columns=column_names)
-                st.session_state[state_key] = df
             else:
-                # 既存データがある場合のお掃除工程
-                # 重複を消して、1列目（名前）をインデックス（枠外）に設定
-                df = raw_data.drop_duplicates(subset=raw_data.columns[0]).set_index(raw_data.columns[0])
-                # 名前の前後の空白を掃除
+                # 【重要】重複を消し、名前を基準にする
+                df = r_raw.drop_duplicates(subset=r_raw.columns[0]).set_index(r_raw.columns[0])
                 df.index = df.index.astype(str).str.strip()
-                # 今の名簿順(ALL_NAMES)と日付順(column_names)に強制的にハメ直す（これで列消失を防ぐ）
+                # 名簿と日付の列をカッチリ固定（これでズレがなくなります）
                 df = df.reindex(index=ALL_NAMES, columns=column_names).fillna(False)
-                # "1", "TRUE" などの混在をすべて本物のチェックボックス型(True/False)に変換
-                df = df.map(lambda x: str(x).upper() in ["TRUE", "1", "1.0"])
-                st.session_state[state_key] = df
+                
+                # 【★ここが修正の核心★】
+                # リロード時に消えてしまうのは、ここでの判定が厳しすぎたからです。
+                # スプレッドシートの「1」「1.0」「TRUE」「文字のTrue」すべてを
+                # 漏らさず本物のチェックマーク（True）に変換します。
+                df = df.map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0", "TRUE.0"])
+            
+            # 整形が終わったデータを貯金箱に入れる
+            st.session_state[state_key] = df
 
-    # 現在編集中のデータを取得
-    req_df = st.session_state[state_key]
+    # 現在編集中のデータ（貯金箱の中身）を表示用に使う
+    display_df = st.session_state[state_key]
 
-    # 2. 画面レイアウト（左にボタン、右に全体表）
+    # ---------------------------------------------------------
+    # 2. 画面レイアウト（左：名前ボタン、右：全体状況）
+    # ---------------------------------------------------------
     col_btn, col_view = st.columns([1, 6])
 
-    # --- 右側の列：全体の状況表示・一括編集 ---
+    # --- 右側の列：全体の状況表示・一括編集（管理者用） ---
     with col_view:
-        st.info("毎月20日には入力してね")
+        st.info("💡 毎月20日までに入力を完了させてください。")
         config = {col: st.column_config.CheckboxColumn(col, width="small") for col in column_names}
 
         if pw == "1234":
             st.subheader("🛠️ 管理者モード：全員分を直接編集")
-            # 管理者用の一括編集フォーム
+            # 管理者専用の一括編集フォーム
             with st.form(key="admin_bulk_edit_form"):
                 edited_all = st.data_editor(
-                    req_df, 
+                    display_df, 
                     column_config=config,
                     use_container_width=True, 
                     height=600,
                     key="admin_bulk_editor"
                 )
                 if st.form_submit_button("💾 全員の変更を一括保存する"):
-                    with st.spinner("スプレッドシートに保存中..."):
+                    with st.spinner("スプレッドシートに一括保存中..."):
                         if save_sheet_robust(edited_all, REQ_SHEET):
                             st.session_state[state_key] = edited_all
-                            st.success("✅ 全員分の休み希望を上書き保存しました！")
+                            st.success("✅ 全員分の休み希望を保存しました！")
+                            time.sleep(1)
                             st.rerun()
         else:
             st.subheader("📊 全体の休み状況（閲覧のみ）")
-            # 一般スタッフには編集不可（disabled）で表示
-            st.data_editor(req_df, column_config=config, use_container_width=True, height=600, disabled=True)
+            # 一般スタッフには編集不可（disabled=True）として表示
+            st.data_editor(display_df, column_config=config, use_container_width=True, height=600, disabled=True)
 
-    # --- 左側の列：名前選択ボタン ---
+    # --- 左側の列：個人入力への誘導ボタン ---
     with col_btn:
-        st.write("📝 入力する名前を選択⇩")
+        st.write("📝 入力")
+        # ボタンを小さくするCSSを適用
         st.markdown("""
             <style>
             .stButton > button {
@@ -255,49 +260,61 @@ if mode == "休み希望入力":
             if st.button(f"{name}", key=f"sel_{name}", use_container_width=True):
                 st.session_state.editing_user = name
 
-    # --- 3. 個別入力エリア（名前ボタンが押されたら出現） ---
+    # ---------------------------------------------------------
+    # 3. 個別入力エリア（名前ボタンが押されたら下に出現）
+    # ---------------------------------------------------------
     if "editing_user" in st.session_state:
         user = st.session_state.editing_user
         st.divider()
         st.header(f"📝 {user} さんの入力画面")
 
-        with st.form(key=f"form_{user}"):
-            # 貯金箱から自分の1行だけを抜き出す
-            user_row = req_df.loc[[user]]
+        # フォームを使って、ポチポチ中の読み込み（重さ）を防止
+        with st.form(key=f"individual_form_{user}"):
+            # 貯金箱から自分の行だけ取り出す
+            user_row = display_df.loc[[user]]
             
-            # 自分の行だけを編集するエディタ
-            edited_user_df = st.data_editor(
+            edited_user_row = st.data_editor(
                 user_row, 
                 column_config=config,
                 use_container_width=True, 
-                key=f"individual_editor_{user}"
+                key=f"editor_{user}"
             )
 
-            submit_button = st.form_submit_button(label=f"💾 {user}さんの分を保存")
+            col_s1, col_s2 = st.columns([1, 4])
+            with col_s1:
+                submit_button = st.form_submit_button(label=f"💾 {user}さんの分を保存")
+            with col_s2:
+                # 閉じるためのボタン（フォーム内なので、何もしないボタンとして置く）
+                if st.form_submit_button("❌ 閉じる"):
+                    del st.session_state.editing_user
+                    st.rerun()
 
             if submit_button:
                 with st.spinner("スプレッドシートを更新中..."):
-                    # 他人の入力を消さないための合体保存ロジック
-                    # ① まず、今この瞬間のスプレッドシートの「全員分」を読み直す（他人の最新入力を含む）
+                    # 他人の入力を消さないためのマージ（合体）保存処理
+                    # ① まず、今この瞬間のスプレッドシートの「全員分」を読み直す
                     latest_all_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=REQ_SHEET, ttl=0)
                     
                     if latest_all_raw is None or latest_all_raw.empty:
-                        # シートが空なら今のreq_dfをベースにする
-                        latest_all_indexed = req_df.copy()
+                        # シートが空なら、今の画面のデータをベースにする
+                        latest_all_indexed = display_df.copy()
                     else:
                         # シートがあるなら、名前を軸にして掃除する
                         latest_all_indexed = latest_all_raw.drop_duplicates(subset=latest_all_raw.columns[0]).set_index(latest_all_raw.columns[0])
                         latest_all_indexed.index = latest_all_indexed.index.astype(str).str.strip()
-                        # 日付列を強制固定（消失対策）
-                        latest_all_indexed = latest_all_indexed.reindex(index=ALL_NAMES, columns=column_names).fillna(False)
+                        # 日付列をカレンダー通りに強制固定（列消失対策）
+                        latest_all_indexed = latest_all_indexed.reindex(columns=column_names).fillna(False)
+                        # 型を True/False に揃える
+                        latest_all_indexed = latest_all_indexed.map(lambda x: str(x).upper() in ["TRUE", "1", "1.0", "YES"])
 
-                    # ② 最新の表の「自分の行だけ」を、今入力した内容に差し替える
-                    latest_all_indexed.loc[user] = edited_user_df.iloc[0]
+                    # ② 最新の全員表の「自分の行だけ」を、今入力した1行に差し替える
+                    latest_all_indexed.loc[user] = edited_user_row.iloc[0]
 
-                    # ③ 完成した合体版を保存
+                    # ③ 完成した最新合体版をスプレッドシートに保存
                     if save_sheet_robust(latest_all_indexed, REQ_SHEET):
-                        # 成功したらセッション（貯金箱）も更新し、編集モードを閉じる
+                        # 成功したら手元の貯金箱も更新
                         st.session_state[state_key] = latest_all_indexed
+                        # 編集モードを終了
                         del st.session_state.editing_user
                         st.success(f"✅ {user} さんの休み希望を保存しました！")
                         time.sleep(1)
@@ -475,6 +492,21 @@ elif mode == "シフト自動生成（案）":
         
         workbook  = writer.book
         worksheet = writer.sheets['シフト案']
+        # --- ここから追加：書式（見た目）の設定 ---
+        # 合計列用の書式（太字、枠線、薄い黄色、数字は小数第一位まで）
+        total_fmt = workbook.add_format({
+            'bold': True, 
+            'border': 1, 
+            'bg_color': '#FFFFCC', 
+            'align': 'center', 
+            'num_format': '#,##0.0'
+        })
+
+        # ついでに他の波線も出るかもしれないので、基本の書式も定義しておきます
+        fmt_base = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
+        fmt_name = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#F2F2F2'})
+        fmt_header = workbook.add_format({'bold': True, 'border': 1, 'align': 'center', 'bg_color': '#D9D9D9'})
+        # ------------------------------------
 
         # --- 1. 書式（見た目）の設定 ---
         # 基本（枠線＋中央揃え）
@@ -507,26 +539,31 @@ elif mode == "シフト自動生成（案）":
         worksheet.set_column(total_col_idx, total_col_idx, 15, fmt_total)
         worksheet.write(0, total_col_idx, "合計時間", fmt_header)
 
-        # --- 4. 魔法の計算式（ここがポイント！） ---
-# --- 4. 魔法の計算式（より強力な修正版） ---
+        # --- 4. 魔法の計算式（最新・修正版） ---
         import xlsxwriter.utility as xl_util
         
         for row_num in range(1, len(ALL_NAMES) + 1):
             excel_row = row_num + 1
             first_day_col = "B"
+            # 末日の列記号を計算
             last_day_col_letter = xl_util.xl_col_to_name(len(column_names))
+            range_ref = f"{first_day_col}{excel_row}:{last_day_col_letter}{excel_row}"
             
-            # --- 【新ロジック】 ---
-            # ハイフンで文字を分割し、右側（終了）から左側（開始）を引き算します
-            # 空欄や「✖」を飛ばし、9:00などの1桁時間にも対応する最強の数式です
+            # 【新ロジック】
+            # SUBSTITUTEでハイフンを「時刻の引き算」ができる形式に整理します。
+            # 数式の先頭に「{」などは入れず、xlsxwriterの標準形式で書き込みます。
+            # これにより、Excel側で自動的に「@」がつくのを防ぎます。
+            
+            # --- 指定された数式（SUM + TIMEVALUE方式） ---
             range_ref = f"{first_day_col}{excel_row}:{last_day_col_letter}{excel_row}"
             
             formula = (
-                f"=SUMPRODUCT(IFERROR((TRIM(RIGHT(SUBSTITUTE({range_ref},\"-\",REPT(\" \",100)),100))"
-                f"-TRIM(LEFT(SUBSTITUTE({range_ref},\"-\",REPT(\" \",100)),100)))*24,0))"
+                f"=SUM(IFERROR((TIMEVALUE(MID({range_ref},FIND(\"-\",{range_ref})+1,10))"
+                f"-TIMEVALUE(LEFT({range_ref},FIND(\"-\",{range_ref})-1)))*24,0))"
             )
             
-            worksheet.write_formula(row_num, total_col_idx, formula, fmt_total)
+            # 書き込み
+            worksheet.write_array_formula(row_num, total_col_idx, row_num, total_col_idx, formula, total_fmt)
 
         # ウィンドウ枠を固定（名前と日付が見えるように）
         worksheet.freeze_panes(1, 1)
