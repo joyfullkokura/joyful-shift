@@ -174,37 +174,49 @@ if mode == "従業員名簿管理":
             
 
 # --- ① 休み希望入力（安定・部分更新版） ---
+# --- ① 休み希望入力（完全統合・改良版） ---
 if mode == "休み希望入力":
     st.title(f"📅 {year}年{month}月の休み希望")
-    # 1. 画面を左右の2つの列（カラム）に分割します。比率は 1対4 です。
-    col_btn, col_view = st.columns([1, 6])
-    with col_view:
-    # 1. スプレッドシートからデータを読み込む
-    # ※ load_sheet_no_cache(シート名, 読み込めなかった時の予備) を使います
-        df_raw = load_sheet_no_cache(REQ_SHEET, pd.DataFrame())
-        # もともとの読み込みコードのすぐ下にこれを追加
-        req_df = df_raw.map(lambda x: str(x) in ["1", "1.0", "TRUE"])
-    # 2. データの整形
-        if df_raw.empty:
-        # シートが空っぽ、または存在しない場合は全員分「空」の表を作る
-            display_df = pd.DataFrame(False, index=ALL_NAMES, columns=column_names)
-        else:
-        # 【重要】今の名簿順(ALL_NAMES)と日付(column_names)に強制的に揃える
-        # これにより、スプレッドシートがズレていても表は綺麗に表示されます
-            display_df = df_raw.reindex(index=ALL_NAMES, columns=column_names).fillna(False)
+    
+    # セッション（貯金箱）のキーを月ごとに作成
+    state_key = f"req_data_{year}_{month}"
 
-    # 3. 画面に表示
-        st.info("毎月20日には入力してね ")
-        
-    # st.dataframe を使うことで、スマホでも見やすい閲覧専用の表になります
-        # column_names（1(金)など）の列をすべてチェックボックスに設定する
+    # 1. データの読み込みと初期化（ページを開いた瞬間に一回だけ実行）
+    if state_key not in st.session_state:
+        with st.spinner("スプレッドシートから最新データを取得中..."):
+            # スプレッドシートから生のデータを読み込む
+            raw_data = load_sheet_cached(REQ_SHEET, pd.DataFrame())
+            
+            if raw_data.empty:
+                # ータがない場合は名簿を元に真っ白な表を作成
+                df = pd.DataFrame(False, index=ALL_NAMES, columns=column_names)
+                st.session_state[state_key] = df
+            else:
+                # 既存データがある場合のお掃除工程
+                # 重複を消して、1列目（名前）をインデックス（枠外）に設定
+                df = raw_data.drop_duplicates(subset=raw_data.columns[0]).set_index(raw_data.columns[0])
+                # 名前の前後の空白を掃除
+                df.index = df.index.astype(str).str.strip()
+                # 今の名簿順(ALL_NAMES)と日付順(column_names)に強制的にハメ直す（これで列消失を防ぐ）
+                df = df.reindex(index=ALL_NAMES, columns=column_names).fillna(False)
+                # "1", "TRUE" などの混在をすべて本物のチェックボックス型(True/False)に変換
+                df = df.map(lambda x: str(x).upper() in ["TRUE", "1", "1.0"])
+                st.session_state[state_key] = df
+
+    # 現在編集中のデータを取得
+    req_df = st.session_state[state_key]
+
+    # 2. 画面レイアウト（左にボタン、右に全体表）
+    col_btn, col_view = st.columns([1, 6])
+
+    # --- 右側の列：全体の状況表示・一括編集 ---
+    with col_view:
+        st.info("毎月20日には入力してね")
         config = {col: st.column_config.CheckboxColumn(col, width="small") for col in column_names}
 
-# 表を表示する（configを渡す）
-        # --- ここから書き換え ---
         if pw == "1234":
-            st.subheader(" 管理者モード：全員分を編集")
-            # 1. フォームの枠で囲むことで、チェックのたびに読み込みが走るのを防ぎます
+            st.subheader("🛠️ 管理者モード：全員分を直接編集")
+            # 管理者用の一括編集フォーム
             with st.form(key="admin_bulk_edit_form"):
                 edited_all = st.data_editor(
                     req_df, 
@@ -213,103 +225,81 @@ if mode == "休み希望入力":
                     height=600,
                     key="admin_bulk_editor"
                 )
-                # 2. 専用の保存ボタン。これを押すまでスプレッドシートへは送信されません
                 if st.form_submit_button("💾 全員の変更を一括保存する"):
-                    with st.spinner("スプレッドシートを更新中..."):
+                    with st.spinner("スプレッドシートに保存中..."):
                         if save_sheet_robust(edited_all, REQ_SHEET):
+                            st.session_state[state_key] = edited_all
                             st.success("✅ 全員分の休み希望を上書き保存しました！")
-                            st.cache_data.clear() 
                             st.rerun()
         else:
-            # パスワードを入れていない時は、今まで通り閲覧専用（または編集不可）で表示
             st.subheader("📊 全体の休み状況（閲覧のみ）")
+            # 一般スタッフには編集不可（disabled）で表示
             st.data_editor(req_df, column_config=config, use_container_width=True, height=600, disabled=True)
-        # --- 書き換えここまで ---
-# 2. 左側の列（col_btn）の中に、これから書くものを表示しろという指示です。
+
+    # --- 左側の列：名前選択ボタン ---
     with col_btn:
-        st.write("📝 下のボタンから自分の名前を選択し休み希望を入力してください⇩") # 見出し
-    # 1. st.markdown（マークダウン）を使って、HTMLの中にデザインの指示を書き込みます。
+        st.write("📝 入力する名前を選択⇩")
         st.markdown("""
-    <style>
-    /* 全てのボタンに対して強制的に適用する設定 */
-    .stButton > button {
-        font-size: 11px !important;   /* 文字をさらに小さく */
-        height: 30px !important;     /* 高さをかなり低く */
-        line-height: 24px !important; /* 文字を中央に */
-        min-height: 24px !important;
-        padding: 0px 5px !important;  /* 左右の余白を最小限に */
-        margin: 0px !important;
-        border-radius: 4px !important; /* 角の丸みを少し残す */
-    }
-    /* ボタンを囲んでいる枠自体の余白も削る */
-    .stButton {
-        margin-bottom: -10px !important; /* 下のボタンとの隙間を詰める */
-    }
-    </style>
-""", unsafe_allow_html=True)
-        # 3. 名簿（ALL_NAMES）に入っている名前を一つずつ取り出してループさせます。
+            <style>
+            .stButton > button {
+                font-size: 11px !important;
+                height: 30px !important;
+                padding: 0px 5px !important;
+                margin-bottom: 2px !important;
+                border-radius: 4px !important;
+            }
+            </style>
+        """, unsafe_allow_html=True)
+
         for name in ALL_NAMES:
-        
-        # 4. その人の名前が書かれたボタンを実際に作ります。
-        # 全員のボタンを区別するために、keyにはその人の名前を入れます。
-            if st.button(f" {name}", key=f"sel_{name}"):
-            
-            # 5. ボタンが押されたら、貯金箱（session_state）に「この人を編集中」とメモします。
+            if st.button(f"{name}", key=f"sel_{name}", use_container_width=True):
                 st.session_state.editing_user = name
-# --- 修正版：個別入力エリアを「フォーム」で囲む ---
+
+    # --- 3. 個別入力エリア（名前ボタンが押されたら出現） ---
     if "editing_user" in st.session_state:
         user = st.session_state.editing_user
         st.divider()
         st.header(f"📝 {user} さんの入力画面")
 
-    # 1. フォームという「ひとまとめの枠」を作ります
-        with st.form(key="my_individual_form"):
-        
-        # 2. この枠の中にある間は、チェックを入れても「読み直し」が発生しません！
-            user_row = display_df.loc[[user]]
-            user_row = user_row.map(lambda x: str(x).upper() in ["TRUE", "1", "1.0"])
-            config = {col: st.column_config.CheckboxColumn(col, width="small") for col in column_names}
+        with st.form(key=f"form_{user}"):
+            # 貯金箱から自分の1行だけを抜き出す
+            user_row = req_df.loc[[user]]
+            
+            # 自分の行だけを編集するエディタ
             edited_user_df = st.data_editor(
                 user_row, 
                 column_config=config,
                 use_container_width=True, 
-                key="individual_editor"
+                key=f"individual_editor_{user}"
             )
 
-        # 3. フォーム専用の「送信ボタン」を作ります
-        # これを押した瞬間だけ、プログラムが動き出します
-            submit_button = st.form_submit_button(label="💾 この内容でスプレッドシートに保存")
+            submit_button = st.form_submit_button(label=f"💾 {user}さんの分を保存")
 
             if submit_button:
                 with st.spinner("スプレッドシートを更新中..."):
-                # A. スプレッドシートから最新を読み込む
-                    latest_all_df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=REQ_SHEET, ttl=0)
-                
-                # --- 【ここからエラー対策を追加】 ---
-                # もし読み込んだシートが空、または列がない（IndexErrorの原因）場合
-                    if latest_all_df is None or latest_all_df.empty or len(latest_all_df.columns) == 0:
-                    # その場で作った真っ白な表（req_df）を最新データとして扱う
+                    # 他人の入力を消さないための合体保存ロジック
+                    # ① まず、今この瞬間のスプレッドシートの「全員分」を読み直す（他人の最新入力を含む）
+                    latest_all_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=REQ_SHEET, ttl=0)
+                    
+                    if latest_all_raw is None or latest_all_raw.empty:
+                        # シートが空なら今のreq_dfをベースにする
                         latest_all_indexed = req_df.copy()
                     else:
-                    # データがあるなら、1列目を「名前」にしてインデックスに設定
-                        first_col = latest_all_df.columns[0]
-                        latest_all_indexed = latest_all_df.set_index(first_col)
+                        # シートがあるなら、名前を軸にして掃除する
+                        latest_all_indexed = latest_all_raw.drop_duplicates(subset=latest_all_raw.columns[0]).set_index(latest_all_raw.columns[0])
                         latest_all_indexed.index = latest_all_indexed.index.astype(str).str.strip()
-                    # カレンダーの列（1日〜31日）を強制的に固定してズレを防ぐ
-                        latest_all_indexed = latest_all_indexed.reindex(columns=column_names).fillna(False)
-                # --- 【ここまで】 ---
+                        # 日付列を強制固定（消失対策）
+                        latest_all_indexed = latest_all_indexed.reindex(index=ALL_NAMES, columns=column_names).fillna(False)
 
-                # B. 自分の行だけを最新データに上書き
-                # latest_all_indexed（他人のデータが入った最新版）に、
-                # 今画面で編集した自分の1行（edited_user_df）をハメ込む
+                    # ② 最新の表の「自分の行だけ」を、今入力した内容に差し替える
                     latest_all_indexed.loc[user] = edited_user_df.iloc[0]
 
-                # C. 修正した save_sheet_robust で保存！
+                    # ③ 完成した合体版を保存
                     if save_sheet_robust(latest_all_indexed, REQ_SHEET):
-                    # 成功したら貯金箱のキャッシュを消去して画面を戻す
-                        st.session_state[state_key] = latest_all_indexed.reset_index()
+                        # 成功したらセッション（貯金箱）も更新し、編集モードを閉じる
+                        st.session_state[state_key] = latest_all_indexed
                         del st.session_state.editing_user
-                        st.success(f"✅ {user} さんの6月の休み希望を保存しました！")
+                        st.success(f"✅ {user} さんの休み希望を保存しました！")
                         time.sleep(1)
                         st.rerun()
 elif mode == "シフト自動生成（案）":
