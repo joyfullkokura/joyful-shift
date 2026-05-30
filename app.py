@@ -563,7 +563,26 @@ elif mode == "シフト自動生成（案）":
             
             # 書き込み
             worksheet.write_array_formula(row_num, total_col_idx, row_num, total_col_idx, formula, total_fmt)
-
+# --- 5. 欠員状況の印字 (合計時間のさらに右側に配置) ---
+        shortage_col_idx = total_col_idx + 2  # 合計時間の2列右に配置
+        worksheet.set_column(shortage_col_idx, shortage_col_idx, 35) # 文字が長いので幅を広く設定
+        
+        # 見出しの作成
+        worksheet.write(0, shortage_col_idx, "欠員状況", fmt_header)
+        
+        # 合計人数の印字
+        shortage_count_fmt = workbook.add_format({'bold': True, 'font_color': '#FF0000', 'align': 'left'})
+        worksheet.write(1, shortage_col_idx, f"今月の合計欠員数: {len(shortage_alerts)}名", shortage_count_fmt)
+        
+        # 欠員リストを日付順に並び替えて印字
+        if shortage_alerts:
+            # メッセージの先頭の数字（日）で並び替え
+            sorted_alerts = sorted(shortage_alerts, key=lambda x: int(x.split('日')[0]))
+            
+            for i, msg in enumerate(sorted_alerts):
+                # 3行目から1行ずつ印字していく
+                # 読みやすいように1行空けたい場合は i*2 などに調整も可能ですが、まずは詰めて印字します
+                worksheet.write(i + 3, shortage_col_idx, msg)
         # ウィンドウ枠を固定（名前と日付が見えるように）
         worksheet.freeze_panes(1, 1)
 
