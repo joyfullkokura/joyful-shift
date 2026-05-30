@@ -473,7 +473,7 @@ elif mode == "シフト自動生成（案）":
     st.markdown("---")
     st.write("設定が完了したら、下のボタンを押してシフトを生成してください。")
     # 生成実行ボタン
-    gen_button = st.button("シフトを生成・再生成（10〜20秒）", use_container_width=True)
+    gen_button = st.button("シフトを生成・再生成（約20秒）", use_container_width=True)
 
     # セッション状態（貯金箱）の初期化
     if "last_generated_df" not in st.session_state:
@@ -483,6 +483,12 @@ elif mode == "シフト自動生成（案）":
 
     # --- 2. 生成ロジック（ボタンが押されたときだけ実行） ---
     if gen_button:
+        progress_bar = st.progress(0)
+        status_text = st.empty() # テキスト表示用
+    
+    # 全ステップ数 (4ブロック * 70回)
+        total_steps = 4 * 70
+        current_step = 0
         with st.spinner("計算中...なんとかなれッ。"):
             # データの準備（休み希望の読み込み）
             req_load_raw = load_sheet_cached(REQ_SHEET)
@@ -604,7 +610,11 @@ elif mode == "シフト自動生成（案）":
             # 結果を貯金箱に保存
             st.session_state.last_generated_df = t_monthly_shift_df
             st.session_state.last_shortage_alerts = t_shortage_alerts
-            st.success(" 生成が完了しました")
+            progress_bar.progress(1.0)
+            status_text.text("🎉 生成が完了しました！")
+            time.sleep(1)
+            status_text.empty() # メッセージを消す
+            progress_bar.empty() # バーを消す
 
     # --- 3. 結果の表示（貯金箱にデータがある場合のみ表示） ---
     if st.session_state.last_generated_df is not None:
