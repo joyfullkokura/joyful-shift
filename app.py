@@ -93,25 +93,53 @@ def load_sheet_cached(worksheet_name):
     except:
         return None
 
-# データを保存するための「道具（関数）」
 def save_sheet_robust(df, worksheet_name):
-    """データを保存する。インデックス（名前）を確実に列に戻して保存する。"""
+    """データを保存する。シートがない場合は自動で作成する。"""
     try:
-        # 1. スタイル設定（色）がついている場合は、純粋なデータだけを取り出す
-        if hasattr(df, 'data'):
-            df = df.data
+        # --- 内部の gspread クライアントを力ずくで探す ---
+        raw_gc = None
         
-        # 2. データのコピーを作り、インデックス（名前）を1列目に戻す
-        # これをしないと、保存するたびに「名前」の列が消えて日付がズレます
-        save_df = df.reset_index()
+        # パターン1: conn 直下に _client がある場合
+        if hasattr(conn, "_client"):
+            raw_gc = conn._client
+        # パターン2: conn.client の中に _client がある場合 (多くのバージョンがこれ)
+        elif hasattr(conn, "client") and hasattr(conn.client, "_client"):
+            raw_gc = conn.client._client
+        # パターン3: conn.client 自体がクライアントの場合
+        elif hasattr(conn, "client"):
+            raw_gc = conn.client
+            
+        # 最終チェック: open_by_url を持っているか
+        if raw_gc is None or not hasattr(raw_gc, "open_by_url"):
+            st.error("Google Sheetsの接続元が見つかりませんでした。手動でシートを作成してください。")
+            return False
+
+        # --- シートの存在確認と作成 ---
+        sh = raw_gc.open_by_url(SPREADSHEET_URL)
+        worksheet_list = [w.title for w in sh.worksheets()]
         
-        # 3. True/Falseを、Googleが数字の1/0に変えないように「文字」として送る
+        if worksheet_name not in worksheet_list:
+            # シートが存在しない場合、新規作成（100行50列）
+            sh.add_worksheet(title=worksheet_name, rows="100", cols="50")
+            st.info(f"✨ 新しいシート「{worksheet_name}」を自動作成しました。")
+
+        # --- データの整形と書き込み ---
+        # 1. スタイル設定などがある場合は純粋なデータだけを取り出す
+        save_df = df.data if hasattr(df, 'data') else df.copy()
+        
+        # 2. インデックス（名前）を1列目に戻す
+        save_df = save_df.reset_index()
+        
+        # 3. Googleが勝手に日付や数字に変えるのを防ぐため、文字に変換
         save_df = save_df.map(lambda x: "TRUE" if x is True else ("FALSE" if x is False else x))
         
-        # 4. スプレッドシートを更新
+        # 4. 書き込み実行 (ライブラリ標準の機能を使用)
         conn.update(spreadsheet=SPREADSHEET_URL, worksheet=worksheet_name, data=save_df)
+        
+        # キャッシュをクリア
         st.cache_data.clear()
         return True
+        
     except Exception as e:
         st.error(f"保存エラー: {e}")
         return False
@@ -123,6 +151,18 @@ def save_master(df):
         st.cache_data.clear()
         return True
     return False
+def load_confirmed_shift(sheet_name):
+    try:
+        # ttl=0 で常に最新を取りに行く
+        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, ttl=0)
+        if df is not None and not df.empty:
+            # 1列目が何であれインデックスにする（名前やグループ）
+            df = df.set_index(df.columns[0])
+            return df
+        return pd.DataFrame()
+    except Exception:
+        # シートが存在しない場合は空のDFを返す
+        return pd.DataFrame()
 
 
 # --- 3. メイン画面 ---
@@ -155,8 +195,8 @@ st.markdown("""
 st.title(" ジョイフル小倉店シフト管理")
 st.sidebar.title("メニュー")
 # ネット上のロゴを表示する例
-mode = st.sidebar.radio("機能を選択", ["休み希望入力","従業員名簿管理", "シフト自動生成（案）"])
-
+# サイドバーの radio ボタンを更新
+mode = st.sidebar.radio("機能を選択", ["確定シフト閲覧", "休み希望入力", "従業員名簿管理", "シフト自動生成（案）"])
 pw = st.sidebar.text_input("管理者パスワード", type="password")
 # --- お知らせの読み込みを追加 ---
 # configシートからデータを読み込む
@@ -670,4 +710,153 @@ elif mode == "シフト自動生成（案）":
             st.error(msg)
     else:
         st.success("✅ 欠員なし！全てのシフトが埋まりました。")
+    if pw == "1234":
+        st.divider()
+        st.subheader("📤 完成したExcelをアップロードして公開")
+        st.write("Excelで微調整が終わったら、そのファイルをここにアップロードしてください。")
+        
+        uploaded_file = st.file_uploader("Excelファイルを選択", type=["xlsx"])
+        
+        # mode == "シフト自動生成（案）" の中のアップロード部分
+# 「シフト自動生成（案）」モード内のアップロード部分
+        if uploaded_file:
+    # 1. Excel読み込み（index_col=0にせず、一度普通に読み込む）
+            final_df = pd.read_excel(uploaded_file, sheet_name=0)
+    
+            st.write("アップロード内容のプレビュー:")
+            st.dataframe(final_df.head(), use_container_width=True)
+    
+            if st.button("🚀 この内容で確定シフトとして公開する"):
+                target_sheet_name = f"shift_{year}_{month:02}"
+        
+        # 保存前に、1列目が「名前」などのインデックスになるよう整える
+        # 保存関数 save_sheet_robust は reset_index() を行うので、
+        # ここでは「名前」をインデックスにしておく
+                try:
+            # 1列目の名前を取得
+                    first_col = final_df.columns[0]
+                    final_df = final_df.set_index(first_col)
+            
+                    if save_sheet_robust(final_df, target_sheet_name):
+                # ★ここが重要：保存に成功したら、読み込み用のキャッシュを強制クリア
+                        st.cache_data.clear()
+                        st.success(f"公開完了！「{target_sheet_name}」を作成しました。")
+                        time.sleep(1)
+                        st.rerun()
+                except Exception as e:
+                   st.error(f"データ整形エラー: {e}")
 st.sidebar.image("cafe_logo.png", width=200)
+if mode == "確定シフト閲覧":
+    st.title("📅 確定シフトの閲覧")
+
+    # --- 今日の出勤メンバー（強化版） ---
+    today = date.today()
+    t_day = today.day
+    # 今日の日付（例: "30"）で始まる列を自動で探す
+    day_prefix = f"{t_day}(" 
+    
+    today_sheet = f"shift_{today.year}_{today.month:02}"
+    today_df = load_sheet_no_cache(today_sheet, pd.DataFrame())
+    
+    with st.expander(f"🏃 本日 {today.month}月{t_day}日の出勤メンバー", expanded=True):
+            if today_df.empty:
+                st.write(f"シート「{today_sheet}」が見つからないか、空っぽです。")
+            else:
+             # 1. 今日の日付列を探す
+                target_col = None
+                for col in today_df.columns:
+                    c_str = str(col).strip()
+                    if c_str.startswith(day_prefix) or c_str == str(t_day):
+                        target_col = col
+                        break
+            
+            # 2. グループ列を特定する（B列 ＝ インデックスの次の列）
+            # ExcelでA列が名前(Index)、B列がグループなら、today_df.columns[0] がグループ列
+                group_col = None
+                if "グループ" in today_df.columns:
+                    group_col = "グループ"
+                elif not today_df.empty:
+                    group_col = today_df.columns[0] # 1列目をグループ列とみなす
+
+                if target_col is None:
+                    st.write(f"今日の日付「{t_day}日」の列が見当たりません。")
+                else:
+                # 3. 出勤者を抽出
+                    workers = today_df[ (today_df[target_col].notna()) & 
+                                        (today_df[target_col].astype(str).str.strip() != "✖") & 
+                                        (today_df[target_col].astype(str).str.strip() != "") ].copy()
+                
+                    if workers.empty:
+                        st.write("本日の出勤予定者はいません。")
+                    else:
+                    # 4. 表示用に整理（Excelのグループ列をそのまま使用）
+                        col_hall, col_kitchen = st.columns(2)
+                    
+                    # グループ列の値を掃除
+                        workers['gp_clean'] = workers[group_col].astype(str).str.strip() if group_col else "不明"
+                    
+                        with col_hall:
+                            st.markdown("### 👔 ホール")
+                        # グループ名に H または W が入っている人（HD, HN, W）
+                            hall_list = workers[workers['gp_clean'].str.contains('H|W|不明', na=False)]
+                            if not hall_list.empty:
+                                for name, row in hall_list.sort_values(by=target_col).iterrows():
+                                    st.write(f"**{row[target_col]}** ： {name}")
+                            else: st.caption("なし")
+
+                        with col_kitchen:
+                            st.markdown("### 🍳 キッチン")
+                         # グループ名に K が入っている人（KD, KN）
+                            kit_list = workers[workers['gp_clean'].str.contains('K', na=False)]
+                            if not kit_list.empty:
+                                for name, row in kit_list.sort_values(by=target_col).iterrows():
+                                    st.write(f"**{row[target_col]}** ： {name}")
+                            else: st.caption("なし")
+    st.divider()
+    col_y, col_m = st.columns(2)
+    target_year = col_y.selectbox("年", [2024, 2025, 2026], index=0)
+    target_month = col_m.selectbox("月", range(1, 13), index=date.today().month - 1)
+    
+    sheet_name = f"shift_{target_year}_{target_month:02}"
+    
+    # デバッグ用：管理者パスワードが入っているときだけシート名を表示
+    if pw == "1234":
+        st.caption(f"（管理者用メモ：シート名「{sheet_name}」を探しています）")
+
+    confirmed_df = load_confirmed_shift(sheet_name)
+    
+    if confirmed_df.empty:
+        st.info(f"💡 {target_year}年{target_month}月の確定シフトはまだ公開されていません。")
+    else:
+        st.write("---")
+        # 選択肢もきれいに掃除
+        search_name = st.selectbox("自分の名前を選択してね！✨", ["(全員分表示)"] + [str(n).strip() for n in ALL_NAMES])
+        
+        def apply_styling(row):
+            # 1. 判定用のターゲット（選択された名前）を掃除
+            target = str(search_name).strip()
+            
+            # 2. 行の「名前」を特定する（インデックス、または1列目を探す）
+            row_index_name = str(row.name).strip()
+            row_first_cell = str(row.iloc[0]).strip() if len(row) > 0 else ""
+            
+            # インデックス、または1列目が選択された名前と一致するか？
+            if target != "(全員分表示)" and (target == row_index_name or target == row_first_cell):
+                # 一致したら行全体を黄色く、文字を太く、枠線を付ける
+                return ['background-color: #FFF9C4; color: black; font-weight: bold; border: 2px solid #FFD700'] * len(row)
+            
+            # 一致しない場合は何もなし
+            return [''] * len(row)
+
+        # スタイル適用
+        # ✖（休み）も同時に強調する
+        styled_df = confirmed_df.style.apply(apply_styling, axis=1).map(
+            lambda x: "color: #E60012; font-weight: bold;" if str(x).strip() == "✖" else ""
+        )
+        
+        # 表示
+        st.dataframe(
+            styled_df,
+            use_container_width=True,
+            height=600
+        )
