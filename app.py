@@ -125,6 +125,32 @@ def save_master(df):
 
 
 # --- 3. メイン画面 ---
+# ジョイフル風カスタムCSS
+st.markdown("""
+    <style>
+    /* メイン背景色 */
+    .stApp {
+        background-color: #FFFDF0;
+    }
+    /* ボタンをジョイフルオレンジに */
+    div.stButton > button:first-child {
+        background-color: #FF8C00;
+        color: white;
+        border-radius: 20px;
+        border: none;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    /* ヘッダーの装飾 */
+    h1 {
+        color: #E60012; /* ジョイフルレッド */
+        border-bottom: 3px solid #FF8C00;
+    }
+    /* サイドバーの調整 */
+    section[data-testid="stSidebar"] {
+        background-color: #F8F8F8;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 st.title(" ジョイフル小倉店シフト管理")
 st.sidebar.title("メニュー")
 # ネット上のロゴを表示する例
@@ -500,84 +526,90 @@ elif mode == "シフト自動生成（案）":
     st.subheader(" シフト表をダウンロード")
 
     buffer = io.BytesIO()
-    # 見やすさを整えるために xlsxwriter を使用
     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-        monthly_shift_df.to_excel(writer, sheet_name='シフト案')
+        # --- 1. グループ情報を合体させたExcel用データを作る ---
+        # 名前とグループの対応辞書を作成
+        name_to_group = master_df.set_index("名前")["グループ"].to_dict()
+        
+        # Excel出力用のコピーを作成
+        excel_df = monthly_shift_df.copy()
+        
+        # 1列目に「グループ」列を差し込む
+        excel_df.insert(0, "グループ", [name_to_group.get(name, "") for name in excel_df.index])
+        
+        # Excelに書き出し（index=Trueなので「名前」も残ります）
+        excel_df.to_excel(writer, sheet_name='シフト案')
         
         workbook  = writer.book
         worksheet = writer.sheets['シフト案']
-        # --- ここから追加：書式（見た目）の設定 ---
-        # 合計列用の書式（太字、枠線、薄い黄色、数字は小数第一位まで）
-        total_fmt = workbook.add_format({
-            'bold': True, 
-            'border': 1, 
-            'bg_color': '#FFFFCC', 
-            'align': 'center', 
-            'num_format': '#,##0.0'
-        })
 
-        # ついでに他の波線も出るかもしれないので、基本の書式も定義しておきます
+        # --- 2. 書式設定 ---
         fmt_base = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
         fmt_name = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#F2F2F2'})
         fmt_header = workbook.add_format({'bold': True, 'border': 1, 'align': 'center', 'bg_color': '#D9D9D9'})
-        # ------------------------------------
-
-        # --- 1. 書式（見た目）の設定 ---
-        # 基本（枠線＋中央揃え）
-        fmt_base = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        # 名前列（太字＋グレー背景）
-        fmt_name = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#F2F2F2'})
-        # ヘッダー（太字＋濃いグレー）
-        fmt_header = workbook.add_format({'bold': True, 'border': 1, 'align': 'center', 'bg_color': '#D9D9D9'})
-        # 合計列（太字＋薄い黄色）
-        fmt_total = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#FFFFCC', 'align': 'center', 'num_format': '#,##0.0'})
-        # 土曜（青）/ 日曜（赤）
+        total_fmt = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#FFFFCC', 'align': 'center', 'num_format': '#,##0.0'})
         fmt_sat = workbook.add_format({'bold': True, 'border': 1, 'align': 'center', 'bg_color': '#CCE5FF', 'font_color': '#0000FF'})
         fmt_sun = workbook.add_format({'bold': True, 'border': 1, 'align': 'center', 'bg_color': '#FFCCCC', 'font_color': '#FF0000'})
 
-        # --- 2. 列の幅とヘッダーの設定 ---
-        worksheet.set_column(0, 0, 25, fmt_name)  # 名前列の幅
-        worksheet.set_column(1, len(column_names), 12, fmt_base) # 日付列の幅
+        # --- 3. 列の幅と位置の設定 ---
+        worksheet.set_column(0, 0, 10, fmt_base)  # A列：グループ
+        worksheet.set_column(1, 1, 20, fmt_name)  # B列：名前
+        
+        # 日付列の位置（C列から開始になる）
+        date_start_col_idx = 2
+        num_date_cols = len(column_names)
+        worksheet.set_column(date_start_col_idx, date_start_col_idx + num_date_cols - 1, 12, fmt_base)
 
-        # ヘッダーの色付け（土日判定）
-        for col_num, value in enumerate(monthly_shift_df.columns):
+        # 合計・休憩列の位置
+        total_col_idx = date_start_col_idx + num_date_cols      # 合計実働
+        break_col_idx = date_start_col_idx + num_date_cols + 1  # 休憩合計
+        
+        worksheet.set_column(total_col_idx, break_col_idx, 12, total_fmt)
+        worksheet.write(0, total_col_idx, "合計実働", fmt_header)
+        worksheet.write(0, break_col_idx, "休憩合計", fmt_header)
+
+        # ヘッダーの色付け（日付列）
+        for i, value in enumerate(column_names):
+            col_pos = date_start_col_idx + i
             if "(土)" in value:
-                worksheet.write(0, col_num + 1, value, fmt_sat)
+                worksheet.write(0, col_pos, value, fmt_sat)
             elif "(日)" in value:
-                worksheet.write(0, col_num + 1, value, fmt_sun)
+                worksheet.write(0, col_pos, value, fmt_sun)
             else:
-                worksheet.write(0, col_num + 1, value, fmt_header)
+                worksheet.write(0, col_pos, value, fmt_header)
 
-        # --- 3. 合計時間列の作成 (32日目の位置) ---
-        total_col_idx = len(column_names) + 1
-        worksheet.set_column(total_col_idx, total_col_idx, 15, fmt_total)
-        worksheet.write(0, total_col_idx, "合計時間", fmt_header)
-
-        # --- 4. 魔法の計算式（最新・修正版） ---
+        # --- 4. 魔法の計算式（列が1つズレたので「C」列から計算） ---
         import xlsxwriter.utility as xl_util
         
         for row_num in range(1, len(ALL_NAMES) + 1):
             excel_row = row_num + 1
-            first_day_col = "B"
-            # 末日の列記号を計算
-            last_day_col_letter = xl_util.xl_col_to_name(len(column_names))
-            range_ref = f"{first_day_col}{excel_row}:{last_day_col_letter}{excel_row}"
+            # 日付の開始は C列、終了列を計算
+            first_day_letter = "C"
+            last_day_letter = xl_util.xl_col_to_name(date_start_col_idx + num_date_cols - 1)
+            range_ref = f"{first_day_letter}{excel_row}:{last_day_letter}{excel_row}"
             
-            # 【新ロジック】
-            # SUBSTITUTEでハイフンを「時刻の引き算」ができる形式に整理します。
-            # 数式の先頭に「{」などは入れず、xlsxwriterの標準形式で書き込みます。
-            # これにより、Excel側で自動的に「@」がつくのを防ぎます。
-            
-            # --- 指定された数式（SUM + TIMEVALUE方式） ---
-            range_ref = f"{first_day_col}{excel_row}:{last_day_col_letter}{excel_row}"
-            
-            formula = (
-                f"=SUM(IFERROR((TIMEVALUE(MID({range_ref},FIND(\"-\",{range_ref})+1,10))"
-                f"-TIMEVALUE(LEFT({range_ref},FIND(\"-\",{range_ref})-1)))*24,0))"
+            # 休憩合計の数式
+            break_formula = (
+                f"=SUM(IFERROR("
+                f"IF((TIMEVALUE(MID({range_ref},FIND(\"-\",{range_ref})+1,10))-TIMEVALUE(LEFT({range_ref},FIND(\"-\",{range_ref})-1)))*24>8, 1, "
+                f"IF((TIMEVALUE(MID({range_ref},FIND(\"-\",{range_ref})+1,10))-TIMEVALUE(LEFT({range_ref},FIND(\"-\",{range_ref})-1)))*24>6, 0.75, 0))"
+                f", 0))"
+            )
+
+            # 実働合計の数式
+            net_total_formula = (
+                f"=SUM(IFERROR("
+                f"((TIMEVALUE(MID({range_ref},FIND(\"-\",{range_ref})+1,10))-TIMEVALUE(LEFT({range_ref},FIND(\"-\",{range_ref})-1)))*24) - "
+                f"IF((TIMEVALUE(MID({range_ref},FIND(\"-\",{range_ref})+1,10))-TIMEVALUE(LEFT({range_ref},FIND(\"-\",{range_ref})-1)))*24>8, 1, "
+                f"IF((TIMEVALUE(MID({range_ref},FIND(\"-\",{range_ref})+1,10))-TIMEVALUE(LEFT({range_ref},FIND(\"-\",{range_ref})-1)))*24>6, 0.75, 0))"
+                f", 0))"
             )
             
-            # 書き込み
-            worksheet.write_array_formula(row_num, total_col_idx, row_num, total_col_idx, formula, total_fmt)
+            worksheet.write_array_formula(row_num, total_col_idx, row_num, total_col_idx, net_total_formula, total_fmt)
+            worksheet.write_array_formula(row_num, break_col_idx, row_num, break_col_idx, break_formula, total_fmt)
+
+        # ウィンドウ枠の固定（グループ・名前・ヘッダーが見えるように）
+        worksheet.freeze_panes(1, 2)
 # --- 5. 欠員状況の印字 (合計時間のさらに右側に配置) ---
         shortage_col_idx = total_col_idx + 2  # 合計時間の2列右に配置
         worksheet.set_column(shortage_col_idx, shortage_col_idx, 35) # 文字が長いので幅を広く設定
