@@ -317,7 +317,7 @@ if mode == "休み希望入力":
                             time.sleep(1)
                             st.rerun()
         else:
-            st.subheader("😪全体の休み状況（閲覧のみ）")
+            st.subheader("😪全体の休み状況")
             # 一般スタッフには編集不可（disabled=True）として表示
             st.data_editor(display_df, column_config=config, use_container_width=True, height=600, disabled=True)
 
@@ -428,7 +428,7 @@ elif mode == "シフト自動生成（案）":
         with col_we:
             st.markdown("### 🌞 金・土・日")
             h_d_we = st.number_input("ホール昼 ", 1, 10, 3, key="h_d_we")
-            k_d_we = st.number_input("キッチン昼 ", 1, 10, 3, key="k_d_we")
+            k_d_we = st.number_input("キッチン昼 ", 1, 10, 2, key="k_d_we")
             h_n_we = st.number_input("ホール夜 ", 1, 10, 4, key="h_n_we")
             k_n_we = st.number_input("キッチン夜 ", 1, 10, 4, key="k_n_we")
 
