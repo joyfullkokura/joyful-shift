@@ -167,7 +167,7 @@ if mode == "従業員名簿管理":
                     st.success("スプレッドシートに保存しました！")
                     st.rerun()
         else:
-            st.warning("左側のメニューでパスワード『1234』を入力してください。")
+            st.warning("左側のメニューでパスワードを入力してください。")
             st.write("### 現在の名簿（閲覧のみ）")
             if not master_df.empty:
                 st.dataframe(master_df, use_container_width=True)
@@ -214,7 +214,6 @@ if mode == "休み希望入力":
 
     # --- 右側の列：全体の状況表示・一括編集（管理者用） ---
     with col_view:
-        st.info("💡 毎月20日までに入力を完了させてください。")
         config = {col: st.column_config.CheckboxColumn(col, width="small") for col in column_names}
 
         if pw == "1234":
@@ -387,7 +386,7 @@ elif mode == "シフト自動生成（案）":
         min_shortage_in_block = 999
         
         # 10回試行して最も欠員の少ないパターンを探す
-        for trial in range(10):
+        for trial in range(70):
             # 試行用の一時的なコピー
             t_monthly_df = monthly_shift_df.copy()
             t_week_counts = {name: 0 for name in ALL_NAMES} # ブロック内でのリセット用カウント
