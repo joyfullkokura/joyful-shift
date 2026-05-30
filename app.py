@@ -127,6 +127,8 @@ def save_master(df):
 # --- 3. メイン画面 ---
 st.title(" ジョイフル小倉店シフト管理")
 st.sidebar.title("メニュー")
+# ネット上のロゴを表示する例
+st.sidebar.image("cafe_logo.png", width=200)
 mode = st.sidebar.radio("機能を選択", ["休み希望入力","従業員名簿管理", "シフト自動生成（案）"])
 
 pw = st.sidebar.text_input("管理者パスワード", type="password")
