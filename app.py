@@ -126,12 +126,16 @@ def save_master(df):
 
 # --- 3. メイン画面 ---
 st.title(" ジョイフル小倉店シフト管理")
-st.info("💡 i")
 st.sidebar.title("メニュー")
 mode = st.sidebar.radio("機能を選択", ["休み希望入力","従業員名簿管理", "シフト自動生成（案）"])
 
 pw = st.sidebar.text_input("管理者パスワード", type="password")
-
+# --- お知らせの読み込みを追加 ---
+# configシートからデータを読み込む
+notice_df = load_sheet_no_cache("config", pd.DataFrame([["お知らせはありません"]], columns=["message"]))
+# 1行目のデータ（実際のメッセージ）を取り出す
+current_notice = notice_df.iloc[0, 0] if not notice_df.empty else "お知らせはありません"
+st.info(f" お知らせ： {current_notice}")
 # データのロード
 master_df = load_master()
 # ここで ALL_NAMES を定義します！
@@ -143,6 +147,16 @@ else:
     ALL_NAMES = []
 if mode == "従業員名簿管理":
         if pw == "1234":
+            with st.expander("お知らせの編集"):
+            # 今のお知らせを表示した状態で入力欄を作る
+                new_notice = st.text_area("スタッフ全員に表示するメッセージを入力してください", value=current_notice)
+                if st.button("お知らせを更新する"):
+                # 新しいメッセージをDataFrameの形にする
+                    updated_notice_df = pd.DataFrame([[new_notice]], columns=["message"])
+                # configシートに上書き保存
+                    if save_sheet_robust(updated_notice_df, "config"):
+                        st.success("お知らせを更新しました！全員の画面に反映されます。")
+                        st.rerun() # 画面を更新して即座に反映
             st.caption("グループ：【HD:ホール昼, HN:ホール夜, KD:キッチン昼, KN:キッチン夜, W:共通】")
     
     # 型エラーを防ぐためのエディタ設定
@@ -162,7 +176,7 @@ if mode == "従業員名簿管理":
         )
             
     
-            if st.button("💾 スプレッドシートに保存"):
+            if st.button("スプレッドシートに保存"):
                 if save_master(edited_df):
                     st.success("スプレッドシートに保存しました！")
                     st.rerun()
@@ -174,7 +188,7 @@ if mode == "従業員名簿管理":
             
 
 if mode == "休み希望入力":
-    st.title(f"📅 {year}年{month}月の休み希望入力")
+    st.title(f" {year}年{month}月の休み希望入力")
     
     state_key = f"req_data_{year}_{month}"
 
@@ -217,7 +231,7 @@ if mode == "休み希望入力":
         config = {col: st.column_config.CheckboxColumn(col, width="small") for col in column_names}
 
         if pw == "1234":
-            st.subheader("🛠️ 管理者モード：全員分を直接編集")
+            st.subheader("管理者モード：全員分を直接編集")
             # 管理者専用の一括編集フォーム
             with st.form(key="admin_bulk_edit_form"):
                 edited_all = st.data_editor(
@@ -227,7 +241,7 @@ if mode == "休み希望入力":
                     height=600,
                     key="admin_bulk_editor"
                 )
-                if st.form_submit_button("💾 全員の変更を一括保存する"):
+                if st.form_submit_button("全員の変更を一括保存する"):
                     with st.spinner("スプレッドシートに一括保存中..."):
                         if save_sheet_robust(edited_all, REQ_SHEET):
                             st.session_state[state_key] = edited_all
@@ -235,19 +249,19 @@ if mode == "休み希望入力":
                             time.sleep(1)
                             st.rerun()
         else:
-            st.subheader("📊 全体の休み状況（閲覧のみ）")
+            st.subheader("😪全体の休み状況（閲覧のみ）")
             # 一般スタッフには編集不可（disabled=True）として表示
             st.data_editor(display_df, column_config=config, use_container_width=True, height=600, disabled=True)
 
     # --- 左側の列：個人入力への誘導ボタン ---
     with col_btn:
-        st.write("📝 入力")
+        st.write("自分の名前を押すと下の方に入力画面が現れるよ！⇩")
         # ボタンを小さくするCSSを適用
         st.markdown("""
             <style>
             .stButton > button {
                 font-size: 11px !important;
-                height: 30px !important;
+                height: 20px !important;
                 padding: 0px 5px !important;
                 margin-bottom: 2px !important;
                 border-radius: 4px !important;
@@ -265,7 +279,7 @@ if mode == "休み希望入力":
     if "editing_user" in st.session_state:
         user = st.session_state.editing_user
         st.divider()
-        st.header(f"📝 {user} さんの入力画面")
+        st.header(f" {user} さんの入力画面")
 
         # フォームを使って、ポチポチ中の読み込み（重さ）を防止
         with st.form(key=f"individual_form_{user}"):
@@ -284,7 +298,7 @@ if mode == "休み希望入力":
                 submit_button = st.form_submit_button(label=f"💾 {user}さんの分を保存")
             with col_s2:
                 # 閉じるためのボタン（フォーム内なので、何もしないボタンとして置く）
-                if st.form_submit_button("❌ 閉じる"):
+                if st.form_submit_button("閉じる"):
                     del st.session_state.editing_user
                     st.rerun()
 
@@ -319,14 +333,14 @@ if mode == "休み希望入力":
                         time.sleep(1)
                         st.rerun()
 elif mode == "シフト自動生成（案）":
-    st.title("📅 シフト自動生成（案）")
+    st.title(" シフト自動生成（案）")
 
     # --- 1. 必要人数（枠数）の設定エリア ---
     with st.expander("必要人数の設定", expanded=True):
         st.write("基本人数を設定してください。")
         col_wd, col_we = st.columns(2)
         with col_wd:
-            st.markdown("### 📅 平日 (月〜木)")
+            st.markdown("###  平日 (月〜木)")
             h_d_wd = st.number_input("ホール昼", 1, 10, 2, key="h_d_wd")
             k_d_wd = st.number_input("キッチン昼", 1, 10, 2, key="k_d_wd")
             h_n_wd = st.number_input("ホール夜", 1, 10, 3, key="h_n_wd")
@@ -482,7 +496,7 @@ elif mode == "シフト自動生成（案）":
     )
 # --- Excel出力機能（自動計算・デザイン調整版） ---
     st.divider()
-    st.subheader("📥 シフト表をダウンロード")
+    st.subheader(" シフト表をダウンロード")
 
     buffer = io.BytesIO()
     # 見やすさを整えるために xlsxwriter を使用
@@ -588,7 +602,7 @@ elif mode == "シフト自動生成（案）":
 
     # 3. ダウンロードボタンを表示
     st.download_button(
-        label="📥 Excelを出力する",
+        label=" Excelを出力する",
         data=buffer.getvalue(),
         file_name=f"joyfull_shift_{year}_{month:02}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
