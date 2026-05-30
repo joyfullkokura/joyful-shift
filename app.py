@@ -341,13 +341,13 @@ elif mode == "シフト自動生成（案）":
         st.write("基本人数を設定してください。")
         col_wd, col_we = st.columns(2)
         with col_wd:
-            st.markdown("###  平日 (月〜木)")
+            st.markdown("### 🚃 平日 (月〜木)")
             h_d_wd = st.number_input("ホール昼", 1, 10, 2, key="h_d_wd")
             k_d_wd = st.number_input("キッチン昼", 1, 10, 2, key="k_d_wd")
             h_n_wd = st.number_input("ホール夜", 1, 10, 3, key="h_n_wd")
             k_n_wd = st.number_input("キッチン夜", 1, 10, 3, key="k_n_wd")
         with col_we:
-            st.markdown("### 🟥 金・土・日")
+            st.markdown("### 🌞 金・土・日")
             h_d_we = st.number_input("ホール昼 ", 1, 10, 3, key="h_d_we")
             k_d_we = st.number_input("キッチン昼 ", 1, 10, 3, key="k_d_we")
             h_n_we = st.number_input("ホール夜 ", 1, 10, 4, key="h_n_we")
