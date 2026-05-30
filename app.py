@@ -6,6 +6,7 @@ import io
 import time
 from datetime import date, timedelta  # 
 from streamlit_gsheets import GSheetsConnection
+import streamlit.components.v1 as components  # 追加
 
 def load_sheet_no_cache(worksheet_name, default_df):
     try:
@@ -300,11 +301,23 @@ if mode == "休み希望入力":
             if st.button(f"{name}", key=f"sel_{name}", use_container_width=True):
                 st.session_state.editing_user = name
 
-    # ---------------------------------------------------------
-    # 3. 個別入力エリア（名前ボタンが押されたら下に出現）
-    # ---------------------------------------------------------
+# --- 3. 個別入力エリア（名前ボタンが押されたら下に出現） ---
     if "editing_user" in st.session_state:
         user = st.session_state.editing_user
+        
+        # 【重要】ここから追加：自動スクロール用の目印とスクリプト
+        st.markdown('<div id="edit_section"></div>', unsafe_allow_html=True)
+        components.html(
+            f"""
+            <script>
+                var element = window.parent.document.getElementById('edit_section');
+                if (element) {{
+                    element.scrollIntoView({{behavior: 'smooth'}});
+                }}
+            </script>
+            """,
+            height=0,
+        )
         st.divider()
         st.header(f" {user} さんの入力画面")
 
