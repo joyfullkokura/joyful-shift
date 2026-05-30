@@ -64,12 +64,15 @@ SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1dDyKAXYsHZg1ta4l7te84
 conn = st.connection("gsheets", type=GSheetsConnection)
 # --- 準備：日付と名簿の情報を整理する ---
 
-# 1. 今日が何年何月かを取得
+# --- 1. 今日が何年何月かを取得（修正版） ---
 if 'view_date' not in st.session_state:
     # 今月の1日を取得
-    this_month_first = date.today().replace(day=1)
-    # 32日後（必ず来月になる）の1日を初期値としてセットする
-    st.session_state.view_date = (this_month_first + timedelta(days=32)).replace(day=1)
+    today_first = date.today().replace(day=1)
+    # 32日後（＝必ず来月）の1日を初期値とする
+    st.session_state.view_date = (today_first + timedelta(days=32)).replace(day=1)
+
+# この v_date.year, v_date.month を使うことで、
+# 2027年になれば自動的に 2027, 2028 という数字が使われます。
 v_date = st.session_state.view_date
 year, month = v_date.year, v_date.month
 
@@ -823,14 +826,16 @@ if mode == "確定シフト閲覧":
     col_y, col_m = st.columns(2)
     
     # 年のデフォルト設定
-    year_list = [2024, 2025, 2026]
+# --- 確定シフト閲覧の年リスト修正 ---
+        # 今年を中心に、去年・今年・来年・再来年を自動でリストにする
+    year_list = [today.year - 1, today.year, today.year + 1, today.year + 2]
+        
     try:
-        default_year_idx = year_list.index(t_year)
+        default_year_idx = year_list.index(today.year)
     except ValueError:
-        default_year_idx = 0
-    
+        default_year_idx = 1 # 万が一見つからなければ今年のインデックス(1)にする
+            
     target_year = col_y.selectbox("年", year_list, index=default_year_idx)
-    
     # 月のデフォルト設定（index=現在の月-1）
     target_month = col_m.selectbox("月", range(1, 13), index=t_month - 1)
     
