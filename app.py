@@ -384,24 +384,52 @@ if mode == "休み希望入力":
     if "editing_user" in st.session_state:
         user = st.session_state.editing_user
         
-        # 画面の一番下へ誘導
+        # --- スマホでも強制的に7列並べるための魔法のCSS ---
+        st.markdown("""
+            <style>
+            /* スマホの縦画面でもカラムを強制的に横並びにする */
+            div[data-testid="stForm"] div[data-testid="stHorizontalBlock"] {
+                display: flex !important;
+                flex-direction: row !important;
+                flex-wrap: nowrap !important;
+                gap: 2px !important;
+            }
+            /* 各カラムの幅を1/7に固定 */
+            div[data-testid="stForm"] div[data-testid="column"] {
+                width: 14% !important;
+                min-width: 14% !important;
+                flex-basis: 14% !important;
+                padding: 0px !important;
+            }
+            /* チェックボックスの余白と位置を調整 */
+            .stCheckbox {
+                display: flex;
+                justify-content: center;
+                margin-top: -18px !important; /* 数字との距離を縮める */
+            }
+            /* 数字のデザイン */
+            .cal-num-text {
+                text-align: center;
+                font-size: 0.9rem;
+                margin-bottom: 0px;
+                font-weight: bold;
+            }
+            </style>
+        """, unsafe_allow_html=True)
+
+        # 自動スクロール用
         st.markdown('<div id="edit_section"></div>', unsafe_allow_html=True)
-        components.html(
-            f"<script>window.parent.document.getElementById('edit_section').scrollIntoView({{behavior: 'smooth'}});</script>",
-            height=0,
-        )
+        components.html(f"<script>window.parent.document.getElementById('edit_section').scrollIntoView({{behavior: 'smooth'}});</script>", height=0)
 
         st.divider()
         st.subheader(f"📅 {user} さんの休み希望 ({month}月)")
-        st.info("「チェックを入れる ＝ 休み」です。")
 
-        # 1. データの型をボラン型（True/False）に確実に変換
+        # 1. データのクレンジング
         raw_user_data = display_df.loc[user].copy()
         user_status_clean = {k: (str(v).upper().strip() in ["TRUE", "1", "1.0", "YES"]) for k, v in raw_user_data.items()}
 
         # 2. フォームの開始
-        with st.form(key=f"simple_calendar_{user}"):
-            # 日曜始まりに設定
+        with st.form(key=f"mobile_friendly_cal_{user}"):
             calendar.setfirstweekday(calendar.SUNDAY)
             cal = calendar.monthcalendar(year, month)
             weekdays_jp = ["日", "月", "火", "水", "木", "金", "土"]
@@ -409,12 +437,10 @@ if mode == "休み希望入力":
             # --- 曜日ヘッダー ---
             h_cols = st.columns(7)
             for i, label in enumerate(weekdays_jp):
-                if i == 0: # 日曜日
-                    h_cols[i].markdown(f"<p style='text-align:center; color:red; font-weight:bold;'>{label}</p>", unsafe_allow_html=True)
-                elif i == 6: # 土曜日
-                    h_cols[i].markdown(f"<p style='text-align:center; color:blue; font-weight:bold;'>{label}</p>", unsafe_allow_html=True)
-                else: # 平日
-                    h_cols[i].markdown(f"<p style='text-align:center; font-weight:bold;'>{label}</p>", unsafe_allow_html=True)
+                color = "#333"
+                if i == 0: color = "red"
+                if i == 6: color = "blue"
+                h_cols[i].markdown(f"<p style='text-align:center; color:{color}; font-size:0.8rem; font-weight:bold; margin-bottom:0;'>{label}</p>", unsafe_allow_html=True)
 
             new_updates = {}
 
@@ -423,49 +449,46 @@ if mode == "休み希望入力":
                 cols = st.columns(7)
                 for i, day in enumerate(week):
                     if day == 0:
-                        cols[i].write("") # 日付がない場所は空欄
+                        cols[i].write("") # 空白
                         continue
                     
-                    # 列名（例: "1(金)"）を特定
                     target_col = column_names[day-1]
                     current_val = user_status_clean.get(target_col, False)
                     
-                    # 曜日に合わせた数字の色
+                    # 曜日に合わせた色
                     num_color = "black"
-                    if i == 0: num_color = "red"  # 日曜日
-                    if i == 6: num_color = "blue" # 土曜日
+                    if i == 0: num_color = "red"
+                    if i == 6: num_color = "blue"
 
                     with cols[i]:
-                        # 数字を表示（ここをタップしてもチェックは入りません）
-                        st.markdown(f"<p style='text-align:center; color:{num_color}; margin-bottom:-10px;'>{day}</p>", unsafe_allow_html=True)
-                        # チェックボックス（中央寄せにするためラベルは空に）
+                        # 数字を表示
+                        st.markdown(f"<p class='cal-num-text' style='color:{num_color};'>{day}</p>", unsafe_allow_html=True)
+                        # チェックボックス
                         new_updates[target_col] = st.checkbox(
-                            "", # ラベルなし
+                            "", # ラベルは隠す
                             value=current_val, 
-                            key=f"simple_cb_{user}_{day}",
+                            key=f"m_cb_{user}_{day}",
                         )
 
             st.write("")
-            col_save, col_cancel = st.columns([1, 1])
+            col_save, col_cancel = st.columns(2)
             with col_save:
-                submit_btn = st.form_submit_button(f"💾 保存する", use_container_width=True, type="primary")
+                submit_btn = st.form_submit_button("💾 保存", use_container_width=True, type="primary")
             with col_cancel:
                 cancel_btn = st.form_submit_button("✖ 閉じる", use_container_width=True)
 
-        # 3. 保存処理 (フォームの外側で判定)
+        # 3. 保存処理
         if submit_btn:
             with st.spinner("保存中..."):
                 latest_all_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=REQ_SHEET, ttl=0)
-                
-                if latest_all_raw is None or latest_all_raw.empty:
-                    latest_all_indexed = display_df.copy()
-                else:
+                if latest_all_raw is not None and not latest_all_raw.empty:
                     latest_all_indexed = latest_all_raw.drop_duplicates(subset=latest_all_raw.columns[0]).set_index(latest_all_raw.columns[0])
                     latest_all_indexed.index = latest_all_indexed.index.astype(str).str.strip()
                     latest_all_indexed = latest_all_indexed.reindex(columns=column_names).fillna(False)
                     latest_all_indexed = latest_all_indexed.map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0", "YES"])
+                else:
+                    latest_all_indexed = display_df.copy()
 
-                # 自分の行を差し替え
                 latest_all_indexed.loc[user] = pd.Series(new_updates)
 
                 if save_sheet_robust(latest_all_indexed, REQ_SHEET):
