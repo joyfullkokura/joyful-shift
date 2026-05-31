@@ -384,52 +384,58 @@ if mode == "休み希望入力":
     if "editing_user" in st.session_state:
         user = st.session_state.editing_user
         
-        # --- スマホでも強制的に7列並べるための魔法のCSS ---
+        # --- 強力なグリッドCSS（スマホでの縦並びを完全禁止） ---
         st.markdown("""
             <style>
-            /* スマホの縦画面でもカラムを強制的に横並びにする */
-            div[data-testid="stForm"] div[data-testid="stHorizontalBlock"] {
-                display: flex !important;
-                flex-direction: row !important;
-                flex-wrap: nowrap !important;
+            /* 1. フォーム内の全カラムを強制的に横7等分にする */
+            [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
+                display: grid !important;
+                grid-template-columns: repeat(7, 1fr) !important;
                 gap: 2px !important;
             }
-            /* 各カラムの幅を1/7に固定 */
-            div[data-testid="stForm"] div[data-testid="column"] {
-                width: 14% !important;
-                min-width: 14% !important;
-                flex-basis: 14% !important;
-                padding: 0px !important;
+            /* 2. Streamlit本来のレスポンシブ（縦並び）機能を無効化 */
+            [data-testid="stForm"] [data-testid="column"] {
+                width: auto !important;
+                min-width: 0px !important;
             }
-            /* チェックボックスの余白と位置を調整 */
+            /* 3. チェックボックスを極限までコンパクトに */
             .stCheckbox {
-                display: flex;
-                justify-content: center;
-                margin-top: -18px !important; /* 数字との距離を縮める */
+                margin-top: -10px !important;
+                display: flex !important;
+                justify-content: center !important;
             }
-            /* 数字のデザイン */
-            .cal-num-text {
+            /* チェックボックスの周りの余白を消す */
+            .stCheckbox div[data-testid="stMarkdownContainer"] {
+                display: none;
+            }
+            /* 4. 数字のサイズと配置 */
+            .cal-num {
                 text-align: center;
-                font-size: 0.9rem;
-                margin-bottom: 0px;
+                font-size: 0.8rem;
                 font-weight: bold;
+                margin-bottom: 0px;
+                line-height: 1.2;
+            }
+            /* 保存ボタン列は2列にする */
+            .stFormSubmitButton [data-testid="stHorizontalBlock"] {
+                grid-template-columns: 1fr 1fr !important;
             }
             </style>
         """, unsafe_allow_html=True)
 
-        # 自動スクロール用
-        st.markdown('<div id="edit_section"></div>', unsafe_allow_html=True)
-        components.html(f"<script>window.parent.document.getElementById('edit_section').scrollIntoView({{behavior: 'smooth'}});</script>", height=0)
+        # 自動スクロール
+        st.markdown('<div id="scroll_target"></div>', unsafe_allow_html=True)
+        components.html(f"<script>window.parent.document.getElementById('scroll_target').scrollIntoView({{behavior: 'smooth', block: 'start'}});</script>", height=0)
 
         st.divider()
-        st.subheader(f"📅 {user} さんの休み希望 ({month}月)")
+        st.subheader(f"📅 {user} さんの希望")
 
-        # 1. データのクレンジング
+        # 1. データ準備
         raw_user_data = display_df.loc[user].copy()
         user_status_clean = {k: (str(v).upper().strip() in ["TRUE", "1", "1.0", "YES"]) for k, v in raw_user_data.items()}
 
-        # 2. フォームの開始
-        with st.form(key=f"mobile_friendly_cal_{user}"):
+        # 2. フォーム
+        with st.form(key=f"ultra_tight_cal_{user}"):
             calendar.setfirstweekday(calendar.SUNDAY)
             cal = calendar.monthcalendar(year, month)
             weekdays_jp = ["日", "月", "火", "水", "木", "金", "土"]
@@ -440,11 +446,11 @@ if mode == "休み希望入力":
                 color = "#333"
                 if i == 0: color = "red"
                 if i == 6: color = "blue"
-                h_cols[i].markdown(f"<p style='text-align:center; color:{color}; font-size:0.8rem; font-weight:bold; margin-bottom:0;'>{label}</p>", unsafe_allow_html=True)
+                h_cols[i].markdown(f"<p style='text-align:center; color:{color}; font-size:0.7rem; font-weight:bold; margin-bottom:0;'>{label}</p>", unsafe_allow_html=True)
 
             new_updates = {}
 
-            # --- カレンダーの日付描画 ---
+            # --- カレンダー日付 ---
             for week in cal:
                 cols = st.columns(7)
                 for i, day in enumerate(week):
@@ -454,21 +460,13 @@ if mode == "休み希望入力":
                     
                     target_col = column_names[day-1]
                     current_val = user_status_clean.get(target_col, False)
-                    
-                    # 曜日に合わせた色
                     num_color = "black"
                     if i == 0: num_color = "red"
                     if i == 6: num_color = "blue"
 
                     with cols[i]:
-                        # 数字を表示
-                        st.markdown(f"<p class='cal-num-text' style='color:{num_color};'>{day}</p>", unsafe_allow_html=True)
-                        # チェックボックス
-                        new_updates[target_col] = st.checkbox(
-                            "", # ラベルは隠す
-                            value=current_val, 
-                            key=f"m_cb_{user}_{day}",
-                        )
+                        st.markdown(f"<p class='cal-num' style='color:{num_color};'>{day}</p>", unsafe_allow_html=True)
+                        new_updates[target_col] = st.checkbox("", value=current_val, key=f"u_cb_{user}_{day}")
 
             st.write("")
             col_save, col_cancel = st.columns(2)
@@ -477,7 +475,7 @@ if mode == "休み希望入力":
             with col_cancel:
                 cancel_btn = st.form_submit_button("✖ 閉じる", use_container_width=True)
 
-        # 3. 保存処理
+        # 3. 保存ロジック
         if submit_btn:
             with st.spinner("保存中..."):
                 latest_all_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=REQ_SHEET, ttl=0)
@@ -494,8 +492,8 @@ if mode == "休み希望入力":
                 if save_sheet_robust(latest_all_indexed, REQ_SHEET):
                     st.session_state[state_key] = latest_all_indexed 
                     del st.session_state.editing_user 
-                    st.success(f"✅ 保存しました！")
-                    time.sleep(1)
+                    st.success(f"✅ 保存完了")
+                    time.sleep(0.5)
                     st.rerun()
 
         if cancel_btn:
