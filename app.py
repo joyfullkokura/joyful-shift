@@ -230,6 +230,7 @@ st.markdown("""
     }
     </style>
     """, unsafe_allow_html=True)
+
 st.title(" ジョイフル小倉店シフト管理")
 st.sidebar.title("メニュー")
 # ネット上のロゴを表示する例
@@ -379,77 +380,104 @@ if mode == "休み希望入力":
             if st.button(f"{name}", key=f"sel_{name}", use_container_width=True):
                 st.session_state.editing_user = name
 
-# --- 3. 個別入力エリア（名前ボタンが押されたら下に出現） ---
+# --- 3. 個別入力エリア（名前ボタンが押されたら出現：カレンダー形式） ---
     if "editing_user" in st.session_state:
         user = st.session_state.editing_user
         
-        # 【重要】ここから追加：自動スクロール用の目印とスクリプト
+        # 画面の一番下へ誘導
         st.markdown('<div id="edit_section"></div>', unsafe_allow_html=True)
         components.html(
-            f"""
-            <script>
-                var element = window.parent.document.getElementById('edit_section');
-                if (element) {{
-                    element.scrollIntoView({{behavior: 'smooth'}});
-                }}
-            </script>
-            """,
+            f"<script>window.parent.document.getElementById('edit_section').scrollIntoView({{behavior: 'smooth'}});</script>",
             height=0,
         )
+
         st.divider()
-        st.header(f" {user} さんの入力画面")
+        st.subheader(f"📅 {user} さんの休み希望 ({month}月)")
+        st.info("「チェックを入れる ＝ 休み」です。")
 
-        # フォームを使って、ポチポチ中の読み込み（重さ）を防止
-        with st.form(key=f"individual_form_{user}"):
-            # 貯金箱から自分の行だけ取り出す
-            user_row = display_df.loc[[user]]
+        # 1. データの型をボラン型（True/False）に確実に変換
+        raw_user_data = display_df.loc[user].copy()
+        user_status_clean = {k: (str(v).upper().strip() in ["TRUE", "1", "1.0", "YES"]) for k, v in raw_user_data.items()}
+
+        # 2. フォームの開始
+        with st.form(key=f"simple_calendar_{user}"):
+            # 日曜始まりに設定
+            calendar.setfirstweekday(calendar.SUNDAY)
+            cal = calendar.monthcalendar(year, month)
+            weekdays_jp = ["日", "月", "火", "水", "木", "金", "土"]
             
-            edited_user_row = st.data_editor(
-                user_row, 
-                column_config=config,
-                use_container_width=True, 
-                key=f"editor_{user}"
-            )
+            # --- 曜日ヘッダー ---
+            h_cols = st.columns(7)
+            for i, label in enumerate(weekdays_jp):
+                if i == 0: # 日曜日
+                    h_cols[i].markdown(f"<p style='text-align:center; color:red; font-weight:bold;'>{label}</p>", unsafe_allow_html=True)
+                elif i == 6: # 土曜日
+                    h_cols[i].markdown(f"<p style='text-align:center; color:blue; font-weight:bold;'>{label}</p>", unsafe_allow_html=True)
+                else: # 平日
+                    h_cols[i].markdown(f"<p style='text-align:center; font-weight:bold;'>{label}</p>", unsafe_allow_html=True)
 
-            col_s1, col_s2 = st.columns([1, 4])
-            with col_s1:
-                submit_button = st.form_submit_button(label=f"💾 {user}さんの分を保存")
-            with col_s2:
-                # 閉じるためのボタン（フォーム内なので、何もしないボタンとして置く）
-                if st.form_submit_button("閉じる"):
-                    del st.session_state.editing_user
+            new_updates = {}
+
+            # --- カレンダーの日付描画 ---
+            for week in cal:
+                cols = st.columns(7)
+                for i, day in enumerate(week):
+                    if day == 0:
+                        cols[i].write("") # 日付がない場所は空欄
+                        continue
+                    
+                    # 列名（例: "1(金)"）を特定
+                    target_col = column_names[day-1]
+                    current_val = user_status_clean.get(target_col, False)
+                    
+                    # 曜日に合わせた数字の色
+                    num_color = "black"
+                    if i == 0: num_color = "red"  # 日曜日
+                    if i == 6: num_color = "blue" # 土曜日
+
+                    with cols[i]:
+                        # 数字を表示（ここをタップしてもチェックは入りません）
+                        st.markdown(f"<p style='text-align:center; color:{num_color}; margin-bottom:-10px;'>{day}</p>", unsafe_allow_html=True)
+                        # チェックボックス（中央寄せにするためラベルは空に）
+                        new_updates[target_col] = st.checkbox(
+                            "", # ラベルなし
+                            value=current_val, 
+                            key=f"simple_cb_{user}_{day}",
+                        )
+
+            st.write("")
+            col_save, col_cancel = st.columns([1, 1])
+            with col_save:
+                submit_btn = st.form_submit_button(f"💾 保存する", use_container_width=True, type="primary")
+            with col_cancel:
+                cancel_btn = st.form_submit_button("✖ 閉じる", use_container_width=True)
+
+        # 3. 保存処理 (フォームの外側で判定)
+        if submit_btn:
+            with st.spinner("保存中..."):
+                latest_all_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=REQ_SHEET, ttl=0)
+                
+                if latest_all_raw is None or latest_all_raw.empty:
+                    latest_all_indexed = display_df.copy()
+                else:
+                    latest_all_indexed = latest_all_raw.drop_duplicates(subset=latest_all_raw.columns[0]).set_index(latest_all_raw.columns[0])
+                    latest_all_indexed.index = latest_all_indexed.index.astype(str).str.strip()
+                    latest_all_indexed = latest_all_indexed.reindex(columns=column_names).fillna(False)
+                    latest_all_indexed = latest_all_indexed.map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0", "YES"])
+
+                # 自分の行を差し替え
+                latest_all_indexed.loc[user] = pd.Series(new_updates)
+
+                if save_sheet_robust(latest_all_indexed, REQ_SHEET):
+                    st.session_state[state_key] = latest_all_indexed 
+                    del st.session_state.editing_user 
+                    st.success(f"✅ 保存しました！")
+                    time.sleep(1)
                     st.rerun()
 
-            if submit_button:
-                with st.spinner("スプレッドシートを更新中..."):
-                    # 他人の入力を消さないためのマージ（合体）保存処理
-                    # ① まず、今この瞬間のスプレッドシートの「全員分」を読み直す
-                    latest_all_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=REQ_SHEET, ttl=0)
-                    
-                    if latest_all_raw is None or latest_all_raw.empty:
-                        # シートが空なら、今の画面のデータをベースにする
-                        latest_all_indexed = display_df.copy()
-                    else:
-                        # シートがあるなら、名前を軸にして掃除する
-                        latest_all_indexed = latest_all_raw.drop_duplicates(subset=latest_all_raw.columns[0]).set_index(latest_all_raw.columns[0])
-                        latest_all_indexed.index = latest_all_indexed.index.astype(str).str.strip()
-                        # 日付列をカレンダー通りに強制固定（列消失対策）
-                        latest_all_indexed = latest_all_indexed.reindex(columns=column_names).fillna(False)
-                        # 型を True/False に揃える
-                        latest_all_indexed = latest_all_indexed.map(lambda x: str(x).upper() in ["TRUE", "1", "1.0", "YES"])
-
-                    # ② 最新の全員表の「自分の行だけ」を、今入力した1行に差し替える
-                    latest_all_indexed.loc[user] = edited_user_row.iloc[0]
-
-                    # ③ 完成した最新合体版をスプレッドシートに保存
-                    if save_sheet_robust(latest_all_indexed, REQ_SHEET):
-                        # 成功したら手元の貯金箱も更新
-                        st.session_state[state_key] = latest_all_indexed
-                        # 編集モードを終了
-                        del st.session_state.editing_user
-                        st.success(f"✅ {user} さんの休み希望を保存しました！")
-                        time.sleep(1)
-                        st.rerun()
+        if cancel_btn:
+            del st.session_state.editing_user
+            st.rerun()
 elif mode == "シフト自動生成（案）":
     st.title(" シフト自動生成（案）")
 
