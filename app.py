@@ -282,9 +282,9 @@ if mode == "従業員名簿管理":
         )
             
     
-            if st.button("スプレッドシートに保存"):
+            if st.button("保存"):
                 if save_master(edited_df):
-                    st.success("スプレッドシートに保存しました！")
+                    st.success("保存しました！")
                     st.rerun()
         else:
             st.warning("左側のメニューでパスワードを入力してください。")
@@ -301,7 +301,7 @@ if mode == "休み希望入力":
     # 1. データの読み込みと初期化
     # リロード（F5）された場合や、まだ貯金箱にデータがない場合のみ実行
     if state_key not in st.session_state:
-        with st.spinner("スプレッドシートから最新データを読み込み中..."):
+        with st.spinner("最新データを読み込み中..."):
             # キャッシュを無視(ttl=0)して、スプレッドシートの「生の事実」を取りに行く
             r_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=REQ_SHEET, ttl=0)
             
@@ -348,7 +348,7 @@ if mode == "休み希望入力":
                     key="admin_bulk_editor"
                 )
                 if st.form_submit_button("全員の変更を一括保存する"):
-                    with st.spinner("スプレッドシートに一括保存中..."):
+                    with st.spinner("一括保存中..."):
                         if save_sheet_robust(edited_all, REQ_SHEET):
                             st.session_state[state_key] = edited_all
                             st.success("✅ 全員分の休み希望を保存しました！")
@@ -473,7 +473,7 @@ elif mode == "シフト自動生成（案）":
     st.markdown("---")
     st.write("設定が完了したら、下のボタンを押してシフトを生成してください。")
     # 生成実行ボタン
-    gen_button = st.button("シフトを生成・再生成（約20秒）", use_container_width=True)
+    gen_button = st.button("シフトを生成・再生成（約23秒）", use_container_width=True)
 
     # セッション状態（貯金箱）の初期化
     if "last_generated_df" not in st.session_state:
@@ -762,7 +762,7 @@ elif mode == "シフト自動生成（案）":
                         st.rerun()
 st.sidebar.image("cafe_logo.png", width=200)
 if mode == "確定シフト閲覧":
-    st.title("📅 確定シフトの閲覧")
+    st.title("確定シフト閲覧")
 
     # --- 今日の出勤メンバー（強化版） ---
     today = date.today()
