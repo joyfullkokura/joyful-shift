@@ -947,7 +947,7 @@ if mode == "確定シフト閲覧":
             height=600
         )
 if mode == "清掃記録":
-    st.title("🧹 毎週日曜夜：フロアモップ清掃ログ")
+    st.title("🧹 毎週日曜夜：モップ清掃")
     
     # 1. 年月の選択
     col_y, col_m = st.columns(2)
@@ -958,63 +958,62 @@ if mode == "清掃記録":
     log_sheet_name = f"cleaning_log_{c_year}_{c_month:02}"
     log_state_key = f"clean_data_{c_year}_{c_month}"
 
-    # ---------------------------------------------------------
-    # 1. シートの存在確認と読み込み（エラー回避ロジック）
-    # ---------------------------------------------------------
     if log_state_key not in st.session_state:
-        with st.spinner("シートを確認中..."):
-            # 保存関数でも使っている「本物の操作ツール」を呼び出す
+        with st.spinner("最新データを読み込み中..."):
             raw_gc = None
             if hasattr(conn, "_client"): raw_gc = conn._client
             elif hasattr(conn, "client") and hasattr(conn.client, "_client"): raw_gc = conn.client._client
             elif hasattr(conn, "client"): raw_gc = conn.client
 
+            r_raw = None
             if raw_gc:
                 sh = raw_gc.open_by_url(SPREADSHEET_URL)
                 worksheet_list = [w.title for w in sh.worksheets()]
-                
-                # シートが存在するかチェック
                 if log_sheet_name in worksheet_list:
-                    # 存在するなら読み込む
                     r_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=log_sheet_name, ttl=0)
-                else:
-                    # 存在しないなら空として扱う（保存時に自動作成される）
-                    r_raw = None
-            else:
-                r_raw = None
 
             sundays = get_sundays(c_year, c_month)
             day_labels = [s.strftime("%m/%d") for s in sundays]
 
             if r_raw is None or r_raw.empty:
-                # 新規作成用のデータフレーム
+                # 新規作成：列ごとに型を指定して作る
                 df = pd.DataFrame({
                     "日付": day_labels,
                     "①事前準備": [False] * len(sundays),
                     "②お部屋(基本)": [False] * len(sundays),
                     "③水回り(仕上げ)": [False] * len(sundays),
                     "④片付け": [False] * len(sundays),
-                    "担当者/メモ": [""] * len(sundays)
+                    "担当者/メモ": [""] * len(sundays) # ここは文字列
                 }).set_index("日付")
             else:
-                # 既存データの読み込みと整形
+                # 既存データの整形
                 df = r_raw.set_index(r_raw.columns[0])
-                df = df.reindex(index=day_labels).fillna(False)
+                df = df.reindex(index=day_labels)
+                
+                # 【ここが修正ポイント！】
+                # チェックボックスの列（Bool型）だけを False で埋める
                 bool_cols = ["①事前準備", "②お部屋(基本)", "③水回り(仕上げ)", "④片付け"]
                 for c in bool_cols:
                     if c in df.columns:
+                        # 既存データの文字(TRUE/1)を本物のチェック（True/False）に変換
                         df[c] = df[c].map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0", "TRUE.0"])
+                    else:
+                        df[c] = False
+                
+                # メモ欄（Text型）は 空の文字 で埋める
                 if "担当者/メモ" not in df.columns:
                     df["担当者/メモ"] = ""
+                else:
+                    df["担当者/メモ"] = df["担当者/メモ"].fillna("").astype(str)
 
             st.session_state[log_state_key] = df
 
     # ---------------------------------------------------------
-    # 2. 入力フォーム（カクつき防止）
+    # 2. 入力フォーム（中身を表示）
     # ---------------------------------------------------------
     display_log_df = st.session_state[log_state_key]
 
-    st.info("💡 日曜 21:00〜 開始。終了したら一番下の保存ボタンを押してください。")
+    st.info("💡 終了したら一番下の保存ボタンを押してください。")
 
     with st.form(key=f"cleaning_form_{log_sheet_name}"):
         edited_log = st.data_editor(
@@ -1024,7 +1023,7 @@ if mode == "清掃記録":
                 "②お部屋(基本)": st.column_config.CheckboxColumn("②部屋"),
                 "③水回り(仕上げ)": st.column_config.CheckboxColumn("③水回"),
                 "④片付け": st.column_config.CheckboxColumn("④片付"),
-                "担当者/メモ": st.column_config.TextColumn("担当者/メモ", width="large")
+                "担当者/メモ": st.column_config.TextColumn("担当者/メモ", width="large", required=False)
             },
             use_container_width=True,
             key=f"editor_widget_{log_sheet_name}"
@@ -1033,11 +1032,10 @@ if mode == "清掃記録":
         submit_save = st.form_submit_button(label="💾 清掃記録を保存する", use_container_width=True)
 
         if submit_save:
-            with st.spinner("スプレッドシートを更新中..."):
-                # 保存実行（save_sheet_robust が自動作成も担当する）
+            with st.spinner("保存中..."):
                 if save_sheet_robust(edited_log, log_sheet_name):
                     st.session_state[log_state_key] = edited_log
-                    st.success("✅ 清掃ログを保存しました！お疲れ様でした！✨")
+                    st.success("✅ 保存しました！お疲れ様でした！✨")
                     time.sleep(1)
                     st.rerun()
 
