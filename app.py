@@ -22,6 +22,14 @@ def load_sheet_no_cache(worksheet_name, default_df):
         return default_df
     except Exception:
         return default_df
+def get_sundays(year, month):
+    """指定された年月のすべての日曜日の日付を取得する"""
+    sundays = []
+    cal = calendar.Calendar(firstweekday=calendar.MONDAY)
+    for day in cal.itermonthdates(year, month):
+        if day.weekday() == 6 and day.month == month: # 6は日曜日
+            sundays.append(day)
+    return sundays
 def calc_work_and_break(val):
     """'10:00-18:00' などの文字列から実働と休憩を計算（最強版）"""
     # 文字列でない、または空の場合は0
@@ -235,7 +243,7 @@ st.title(" ジョイフル小倉店シフト管理")
 st.sidebar.title("メニュー")
 # ネット上のロゴを表示する例
 # サイドバーの radio ボタンを更新
-mode = st.sidebar.radio("機能を選択", ["確定シフト閲覧", "休み希望入力", "従業員名簿管理", "シフト自動生成（案）"])
+mode = st.sidebar.radio("機能を選択", ["確定シフト閲覧", "休み希望入力", "清掃記録", "従業員名簿管理", "シフト自動生成（案）"])
 pw = st.sidebar.text_input("管理者パスワード", type="password")
 # --- お知らせの読み込みを追加 ---
 # configシートからデータを読み込む
@@ -938,3 +946,106 @@ if mode == "確定シフト閲覧":
             use_container_width=True,
             height=600
         )
+if mode == "清掃記録":
+    st.title("🧹 毎週日曜夜：フロアモップ清掃ログ")
+    
+    # 1. 年月の選択
+    col_y, col_m = st.columns(2)
+    c_today = date.today()
+    c_year = col_y.selectbox("記録年", [c_today.year, c_today.year + 1], index=0)
+    c_month = col_m.selectbox("記録月", range(1, 13), index=c_today.month - 1)
+    
+    log_sheet_name = f"cleaning_log_{c_year}_{c_month:02}"
+    log_state_key = f"clean_data_{c_year}_{c_month}"
+
+    # ---------------------------------------------------------
+    # 1. シートの存在確認と読み込み（エラー回避ロジック）
+    # ---------------------------------------------------------
+    if log_state_key not in st.session_state:
+        with st.spinner("シートを確認中..."):
+            # 保存関数でも使っている「本物の操作ツール」を呼び出す
+            raw_gc = None
+            if hasattr(conn, "_client"): raw_gc = conn._client
+            elif hasattr(conn, "client") and hasattr(conn.client, "_client"): raw_gc = conn.client._client
+            elif hasattr(conn, "client"): raw_gc = conn.client
+
+            if raw_gc:
+                sh = raw_gc.open_by_url(SPREADSHEET_URL)
+                worksheet_list = [w.title for w in sh.worksheets()]
+                
+                # シートが存在するかチェック
+                if log_sheet_name in worksheet_list:
+                    # 存在するなら読み込む
+                    r_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=log_sheet_name, ttl=0)
+                else:
+                    # 存在しないなら空として扱う（保存時に自動作成される）
+                    r_raw = None
+            else:
+                r_raw = None
+
+            sundays = get_sundays(c_year, c_month)
+            day_labels = [s.strftime("%m/%d") for s in sundays]
+
+            if r_raw is None or r_raw.empty:
+                # 新規作成用のデータフレーム
+                df = pd.DataFrame({
+                    "日付": day_labels,
+                    "①事前準備": [False] * len(sundays),
+                    "②お部屋(基本)": [False] * len(sundays),
+                    "③水回り(仕上げ)": [False] * len(sundays),
+                    "④片付け": [False] * len(sundays),
+                    "担当者/メモ": [""] * len(sundays)
+                }).set_index("日付")
+            else:
+                # 既存データの読み込みと整形
+                df = r_raw.set_index(r_raw.columns[0])
+                df = df.reindex(index=day_labels).fillna(False)
+                bool_cols = ["①事前準備", "②お部屋(基本)", "③水回り(仕上げ)", "④片付け"]
+                for c in bool_cols:
+                    if c in df.columns:
+                        df[c] = df[c].map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0", "TRUE.0"])
+                if "担当者/メモ" not in df.columns:
+                    df["担当者/メモ"] = ""
+
+            st.session_state[log_state_key] = df
+
+    # ---------------------------------------------------------
+    # 2. 入力フォーム（カクつき防止）
+    # ---------------------------------------------------------
+    display_log_df = st.session_state[log_state_key]
+
+    st.info("💡 日曜 21:00〜 開始。終了したら一番下の保存ボタンを押してください。")
+
+    with st.form(key=f"cleaning_form_{log_sheet_name}"):
+        edited_log = st.data_editor(
+            display_log_df,
+            column_config={
+                "①事前準備": st.column_config.CheckboxColumn("①準備"),
+                "②お部屋(基本)": st.column_config.CheckboxColumn("②部屋"),
+                "③水回り(仕上げ)": st.column_config.CheckboxColumn("③水回"),
+                "④片付け": st.column_config.CheckboxColumn("④片付"),
+                "担当者/メモ": st.column_config.TextColumn("担当者/メモ", width="large")
+            },
+            use_container_width=True,
+            key=f"editor_widget_{log_sheet_name}"
+        )
+
+        submit_save = st.form_submit_button(label="💾 清掃記録を保存する", use_container_width=True)
+
+        if submit_save:
+            with st.spinner("スプレッドシートを更新中..."):
+                # 保存実行（save_sheet_robust が自動作成も担当する）
+                if save_sheet_robust(edited_log, log_sheet_name):
+                    st.session_state[log_state_key] = edited_log
+                    st.success("✅ 清掃ログを保存しました！お疲れ様でした！✨")
+                    time.sleep(1)
+                    st.rerun()
+
+    # ガイド
+    with st.expander("項目別の詳しいやり方を確認"):
+        st.markdown("""
+        - **① 事前準備**：床の荷物を上に上げる / 窓を閉める / モップにシートをセット
+        - **② お部屋**　：寝室（ベッドまわり） ➔ リビング・ダイニング ➔ 廊下・階段
+        - **③ 水回り**　：キッチン（油ハネ） ➔ 洗面所（髪の毛） ➔ トイレ（一番最後）
+        - **④ 片付け**　：集めたゴミを吸い取る / シートを捨てる / 上に上げた物を元に戻す
+        """)
