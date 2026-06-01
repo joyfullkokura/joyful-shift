@@ -882,15 +882,62 @@ st.sidebar.image("cafe_logo.png", width=200)
 if mode == "確定シフト閲覧":
     st.title("確定シフト閲覧")
 
-    # --- 今日の出勤メンバー（強化版） ---
+    # --- 0. 吹き出しアニメーション用のCSS ---
+    st.markdown("""
+        <style>
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(10px) scale(0.9); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        .tweet-bubble {
+            display: inline-block;
+            background-color: #FFF176;
+            color: #333;
+            padding: 4px 10px;
+            border-radius: 15px;
+            font-size: 0.8rem;
+            margin-left: 10px;
+            position: relative;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
+            animation: fadeInUp 0.6s ease-out;
+        }
+        .tweet-bubble::after {
+            content: '';
+            position: absolute;
+            left: -8px;
+            top: 50%;
+            margin-top: -5px;
+            border-top: 5px solid transparent;
+            border-right: 8px solid #FFF176;
+            border-bottom: 5px solid transparent;
+        }
+        div[data-testid="column"] {
+            display: flex;
+            align-items: center;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # --- 1. つぶやきデータの読み込み準備 ---
     today = date.today()
+    date_str_today = today.strftime("%Y/%m/%d")
+    tweet_sheet = "daily_tweets"
+    
+    # 全つぶやきをロード
+    all_tweets_df = load_sheet_no_cache(tweet_sheet, pd.DataFrame(columns=["日付", "名前", "メッセージ"]))
+    
+    # 今日の分だけ抽出して辞書化 {名前: メッセージ}
+    if not all_tweets_df.empty and "日付" in all_tweets_df.columns:
+        today_tweets = all_tweets_df[all_tweets_df["日付"] == date_str_today]
+        tweet_dict = dict(zip(today_tweets["名前"], today_tweets["メッセージ"]))
+    else:
+        tweet_dict = {}
+
+    # --- 2. 出勤メンバー表示ロジック（既存の続き） ---
     t_day = today.day
     t_month = today.month
     t_year = today.year
-
-    # 今日の日付（例: "30"）で始まる列を自動で探す
     day_prefix = f"{t_day}(" 
-    
     today_sheet = f"shift_{t_year}_{t_month:02}"
     today_df = load_sheet_no_cache(today_sheet, pd.DataFrame())
     
@@ -898,25 +945,15 @@ if mode == "確定シフト閲覧":
         if today_df.empty:
             st.write(f"シート「{today_sheet}」が見つからないか、空っぽです。")
         else:
-            # 1. 今日の日付列を探す
             target_col = None
             for col in today_df.columns:
-                c_str = str(col).strip()
-                if c_str.startswith(day_prefix) or c_str == str(t_day):
+                if str(col).strip().startswith(day_prefix) or str(col).strip() == str(t_day):
                     target_col = col
                     break
             
-            # 2. グループ列を特定する
-            group_col = None
-            if "グループ" in today_df.columns:
-                group_col = "グループ"
-            elif not today_df.empty:
-                group_col = today_df.columns[0] # インデックスの次の1列目をグループ列とみなす
-
             if target_col is None:
                 st.write(f"今日の日付「{t_day}日」の列が見当たりません。")
             else:
-                # 3. 出勤者を抽出
                 workers = today_df[ (today_df[target_col].notna()) & 
                                     (today_df[target_col].astype(str).str.strip() != "✖") & 
                                     (today_df[target_col].astype(str).str.strip() != "") ].copy()
@@ -924,31 +961,52 @@ if mode == "確定シフト閲覧":
                 if workers.empty:
                     st.write("本日の出勤予定者はいません。")
                 else:
-                    # 4. 表示用に整理（Excelのグループ列をそのまま使用）
+                    group_col = "グループ" if "グループ" in today_df.columns else today_df.columns[0]
                     col_hall, col_kitchen = st.columns(2)
+                    workers['gp_clean'] = workers[group_col].astype(str).str.strip()
                     
-                    # グループ列の値を掃除
-                    workers['gp_clean'] = workers[group_col].astype(str).str.strip() if group_col else "不明"
-                    
+                    # --- ヘルパー関数：名前＋つぶやき＋入力ボタンを表示 ---
+                    def render_worker_line(name, time_val, key_suffix):
+                        cols = st.columns([0.45, 0.45, 0.1])
+                        with cols[0]:
+                            # 時間と名前を表示
+                            st.markdown(f"**{time_val}** : {name}", unsafe_allow_html=True)
+                        with cols[1]:
+                            # つぶやきがあればアニメーション付きで表示
+                            if name in tweet_dict:
+                                st.markdown(f'<span class="tweet-bubble">{tweet_dict[name]}</span>', unsafe_allow_html=True)
+                        with cols[2]:
+                            # つぶやき入力用ポップオーバー
+                            with st.popover("💬", help="意気込みを投稿"):
+                                new_msg = st.text_input(f"{name}さんのつぶやき", max_chars=20, key=f"in_{key_suffix}")
+                                if st.button("送信", key=f"btn_{key_suffix}"):
+                                    # 保存処理
+                                    new_row = pd.DataFrame([{"日付": date_str_today, "名前": name, "メッセージ": new_msg}])
+                                    # 重複削除して合体
+                                    updated_tweets = pd.concat([all_tweets_df[~((all_tweets_df["日付"] == date_str_today) & (all_tweets_df["名前"] == name))], new_row])
+                                    if save_sheet_robust(updated_tweets, tweet_sheet):
+                                        st.success("投稿しました！")
+                                        time.sleep(0.5)
+                                        st.rerun()
+
                     with col_hall:
                         st.markdown("### 👔 ホール")
-                        # グループ名に H または W が入っている人（HD, HN, W, または不明）
-                        hall_list = workers[workers['gp_clean'].str.contains('H|W|不明', na=False)]
+                        hall_list = workers[workers['gp_clean'].str.contains('H|W|不明', na=False)].sort_values(by=target_col)
                         if not hall_list.empty:
-                            for name, row in hall_list.sort_values(by=target_col).iterrows():
-                                st.write(f"**{row[target_col]}** ： {name}")
+                            for idx, (name, row) in enumerate(hall_list.iterrows()):
+                                render_worker_line(name, row[target_col], f"h_{idx}")
                         else: st.caption("なし")
 
                     with col_kitchen:
                         st.markdown("### 🍳 キッチン")
-                        # グループ名に K が入っている人（KD, KN）
-                        kit_list = workers[workers['gp_clean'].str.contains('K', na=False)]
+                        kit_list = workers[workers['gp_clean'].str.contains('K', na=False)].sort_values(by=target_col)
                         if not kit_list.empty:
-                            for name, row in kit_list.sort_values(by=target_col).iterrows():
-                                st.write(f"**{row[target_col]}** ： {name}")
+                            for idx, (name, row) in enumerate(kit_list.iterrows()):
+                                render_worker_line(name, row[target_col], f"k_{idx}")
                         else: st.caption("なし")
     
     st.divider()
+    # --- (以下、年月選択や全体表のコードはそのまま) ---
 
     # --- 全体表示の年月選択（デフォルトを現在に設定） ---
     col_y, col_m = st.columns(2)
