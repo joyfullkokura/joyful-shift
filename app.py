@@ -209,7 +209,19 @@ def load_confirmed_shift(sheet_name):
     except Exception:
         # シートが存在しない場合は空のDFを返す
         return pd.DataFrame()
+def time_to_float(time_str):
+    """'10:30' -> 10.5 への変換"""
+    try:
+        h, m = map(int, time_str.split(':'))
+        return h + m / 60.0
+    except:
+        return 10.0
 
+def float_to_time(val):
+    """10.75 -> '10:45' への変換"""
+    h = int(val)
+    m = int((val - h) * 60)
+    return f"{h:02d}:{m:02d}"
 
 # --- 3. メイン画面 ---
 # ジョイフル風カスタムCSS
@@ -243,7 +255,7 @@ st.title(" ジョイフル小倉店シフト管理")
 st.sidebar.title("メニュー")
 # ネット上のロゴを表示する例
 # サイドバーの radio ボタンを更新
-mode = st.sidebar.radio("機能を選択", ["確定シフト閲覧", "休み希望入力", "清掃記録", "従業員名簿管理", "シフト自動生成（案）"])
+mode = st.sidebar.radio("機能を選択", ["確定シフト閲覧", "休み希望入力", "清掃記録", "レジ締め作業", "従業員名簿管理", "シフト自動生成（案）"])
 pw = st.sidebar.text_input("管理者パスワード", type="password")
 # --- お知らせの読み込みを追加 ---
 # configシートからデータを読み込む
@@ -1047,3 +1059,240 @@ if mode == "清掃記録":
         - **③ 水回り**　：キッチン（油ハネ） ➔ 洗面所（髪の毛） ➔ トイレ（一番最後）
         - **④ 片付け**　：集めたゴミを吸い取る / シートを捨てる / 上に上げた物を元に戻す
         """)
+if mode == "レジ締め作業":
+    st.title("💰 レジ締め作業")
+
+    # 1. 準備
+    t_today = date.today()
+    date_str = t_today.strftime("%Y/%m/%d")
+    shift_sheet = f"shift_{t_today.year}_{t_today.month:02}"
+    layout_sheet = "daily_layout"
+    
+    def f_to_t(val):
+        h = int(val)
+        m = int((val - h) * 60)
+        return f"{h:02d}:{m:02d}"
+
+    # 休憩計算ロジック（6h以上: 0.75 / 8h以上: 1.0）
+    def get_break_time(total_h):
+        if total_h >= 8.0: return 1.0
+        elif total_h >= 6.0: return 0.75
+        return 0.0
+
+    # --- 2. データの初期化（daily_layoutを優先） ---
+    if "daily_layout_list" not in st.session_state:
+        with st.spinner("データを準備中..."):
+            initial_list = []
+            # まず daily_layout（保存済み実績）を確認
+            existing_data = load_sheet_no_cache(layout_sheet, pd.DataFrame())
+            
+            day_exists = False
+            if not existing_data.empty and "日付" in existing_data.columns:
+                existing_day = existing_data[existing_data["日付"] == date_str]
+                if not existing_day.empty:
+                    day_exists = True
+                    for _, row in existing_day.iterrows():
+                        name = row["名前"]
+                        # 元々の部署(HD, HN, W等)をマスターから取得
+                        match = master_df[master_df['名前'] == name]
+                        gp = match['グループ'].values[0] if not match.empty else "不明"
+                        
+                        initial_list.append({
+                            "名前": name,
+                            "部署": gp,
+                            "役割": row["役割"], # 保存された「フロント」or「キッチン」
+                            "時間": (time_to_float(str(row["入店"])), time_to_float(str(row["退勤"])))
+                        })
+
+            # 保存データがなければ、今日の確定シフトから読み込み
+            if not day_exists:
+                confirmed = load_confirmed_shift(shift_sheet)
+                # 今日の日付列を探す（例: "1(月)"）
+                t_day_col = f"{t_today.day}({WEEKDAYS_JP[t_today.weekday()]})"
+                if not confirmed.empty and t_day_col in confirmed.columns:
+                    today_workers = confirmed[confirmed[t_day_col].astype(str).str.contains("-")]
+                    for name, row in today_workers.iterrows():
+                        try:
+                            s_str, e_str = str(row[t_day_col]).split("-")
+                            match = master_df[master_df['名前'] == name]
+                            gp = match['グループ'].values[0] if not match.empty else "不明"
+                            # W以外の初期役割は部署名から判断
+                            role_init = "キッチン" if "K" in str(gp) else "フロント"
+                            initial_list.append({
+                                "名前": name, "部署": gp, "役割": role_init,
+                                "時間": (time_to_float(s_str), time_to_float(e_str))
+                            })
+                        except: continue
+            
+            st.session_state.daily_layout_list = initial_list
+
+    # 結果を保持する貯金箱の初期化
+    if "daily_calc_results" not in st.session_state:
+        st.session_state.daily_calc_results = None
+
+    # --- 3. スタッフの追加・削除 ---
+    st.subheader("👥 スタッフの追加・削除")
+    c_add1, c_add2 = st.columns([3, 1])
+    with c_add1:
+        new_worker = st.selectbox("スタッフを配置に追加", ["(選択してください)"] + ALL_NAMES, label_visibility="collapsed")
+    with c_add2:
+        if st.button("➕ 配置に追加", use_container_width=True) and new_worker != "(選択してください)":
+            match = master_df[master_df['名前'] == new_worker]
+            gp = match['グループ'].values[0] if not match.empty else "不明"
+            st.session_state.daily_layout_list.append({
+                "名前": new_worker, "部署": gp, "役割": "フロント", "時間": (10.0, 14.0)
+            })
+            st.rerun()
+
+    # --- 4. メイン入力フォーム（カクつき防止） ---
+    st.markdown("---")
+    st.info("💡 バーを動かして調整し、一番下の「保存ボタン」を押すと計算が更新されます。")
+    
+    with st.form(key="daily_layout_form_v3"):
+        temp_updated_list = []
+        
+        for i, item in enumerate(st.session_state.daily_layout_list):
+            name = item["名前"]
+            gp = item["部署"]
+            start, end = item["時間"]
+            
+            # 休憩計算のリアルタイム表示用
+            total_h = end - start
+            brk_h = get_break_time(total_h)
+            net_h = total_h - brk_h
+            
+            # 左側のラベル：休憩引きの計算式を見せる
+            calc_text = f"({total_h:g} - {brk_h:g})" if brk_h > 0 else f"({total_h:g})"
+            
+            row_col1, row_col2, row_col3, row_col4 = st.columns([2.8, 2, 5, 1])
+            
+            with row_col1:
+                st.write(f"**{name}**")
+                st.caption(f"{calc_text} ➔ 実働:{net_h:g}h")
+            
+            with row_col2:
+                # 【W（共通）の場合のみ役割を選択可能にする】
+                if str(gp).upper() == "W":
+                    role = st.selectbox(f"役割_{i}", ["フロント", "キッチン"], 
+                                        index=0 if item["役割"]=="フロント" else 1, key=f"role_{i}")
+                else:
+                    role = item["役割"]
+                    st.write(f"{role}")
+            
+            with row_col3:
+                # 15分(0.25)刻みのスライダー
+                new_range = st.slider(f"sl_{i}", 10.0, 24.0, (float(start), float(end)), 
+                                    step=0.25, key=f"slider_{i}", label_visibility="collapsed")
+                st.caption(f"🕙 {f_to_t(new_range[0])} 〜 {f_to_t(new_range[1])}")
+            
+            with row_col4:
+                to_delete = st.checkbox("削", key=f"del_check_{i}")
+
+            temp_updated_list.append({"名前": name, "部署": gp, "役割": role, "時間": new_range, "削除": to_delete})
+
+        submit_btn = st.form_submit_button("📊 修正を反映して集計・保存する", use_container_width=True)
+
+        if submit_btn:
+            # 1. リストの更新
+            final_list = [it for it in temp_updated_list if not it["削除"]]
+            st.session_state.daily_layout_list = final_list
+            
+            # 変数の初期化
+            day_total_net = 0.0
+            lunch_f_net, lunch_k_net = 0.0, 0.0
+            night_f_net, night_k_net = 0.0, 0.0
+            
+            # 人数表用（休憩を引かない「店にいる人数」ベース）
+            hourly_f_count = {h: 0.0 for h in range(10, 24)}
+            hourly_k_count = {h: 0.0 for h in range(10, 24)}
+
+            save_rows = []
+            for item in final_list:
+                s, e = item["時間"]
+                total_work = e - s
+                brk = get_break_time(total_work)
+                net_work = total_work - brk
+                day_total_net += net_work
+                
+                # --- A. 1時間ごとの「配置人数」を計算（休憩を引かないそのままの人数） ---
+                ts = s
+                while ts < e:
+                    h_idx = int(ts)
+                    if h_idx in hourly_f_count:
+                        if item["役割"] == "フロント": hourly_f_count[h_idx] += 0.25
+                        else: hourly_k_count[h_idx] += 0.25
+                    ts += 0.25
+
+                # --- B. 昼夜の「実働合計」を計算（休憩を按分して差し引く） ---
+                net_ratio = (net_work / total_work) if total_work > 0 else 0
+                ts = s
+                while ts < e:
+                    increment = 0.25 * net_ratio
+                    if 10.0 <= ts < 15.0:
+                        if item["役割"] == "フロント": lunch_f_net += increment
+                        else: lunch_k_net += increment
+                    elif 15.0 <= ts < 24.0:
+                        if item["役割"] == "フロント": night_f_net += increment
+                        else: night_k_net += increment
+                    ts += 0.25
+
+                save_rows.append({
+                    "日付": date_str, "名前": item["名前"], "部署": item["部署"], "役割": item["役割"], 
+                    "入店": f_to_t(s), "退勤": f_to_t(e),
+                    "実働": round(net_work, 2), "休憩時間": brk
+                })
+
+            # 結果を保存
+            st.session_state.daily_calc_results = {
+                "day_total": day_total_net,
+                "lunch_total": lunch_f_net + lunch_k_net,
+                "night_total": night_f_net + night_k_net,
+                "lunch_f": lunch_f_net, "lunch_k": lunch_k_net,
+                "night_f": night_f_net, "night_k": night_k_net,
+                "hourly_f": hourly_f_count,
+                "hourly_k": hourly_k_count
+            }
+
+            # 3. 保存処理
+            all_data = load_sheet_no_cache(layout_sheet, pd.DataFrame())
+            new_day_df = pd.DataFrame(save_rows)
+            if not all_data.empty and "日付" in all_data.columns:
+                others = all_data[all_data["日付"] != date_str]
+                final_save_df = pd.concat([others, new_day_df], ignore_index=True)
+            else:
+                final_save_df = new_day_df
+            
+            save_sheet_robust(final_save_df, layout_sheet)
+            st.success(f"{date_str} の実績を保存しました！")
+            st.rerun()
+
+    # --- 5. 集計結果の表示 ---
+    if st.session_state.daily_calc_results:
+        res = st.session_state.daily_calc_results
+        st.markdown("---")
+        
+        # 実働合計（給与計算用）を大きく表示
+        st.metric("📊 本日の総実働時間（休憩引き後）", f"{res['day_total']:.2f} h")
+        
+        c_sum1, c_sum2 = st.columns(2)
+        with c_sum1:
+            st.metric("☀️ 昼の実働合計 (10-15時)", f"{res['lunch_total']:.2f} h")
+        with c_sum2:
+            st.metric("🌙 夜の実働合計 (15-24時)", f"{res['night_total']:.2f} h")
+        
+        # 人数表（直感的な「今何人いるか」ベース）
+        st.write("**👥 1時間ごとの配置人数（出勤ベース）**")
+        st.caption("※休憩時間を考慮しない「店にいる人数」を表示しています。")
+        df_hourly = pd.DataFrame([res['hourly_f'], res['hourly_k']], index=["フロント", "キッチン"])
+        df_hourly.columns = [f"{h}時" for h in range(10, 24)]
+        st.table(df_hourly.style.format("{:.1f}")) # 1.0 や 0.5 で表示
+
+        with st.expander("詳細な内訳（実働/給与ベース）", expanded=False):
+            st.write("※休憩時間を差し引いた、時間帯別の正確な労働時間です。")
+            d1, d2 = st.columns(2)
+            with d1:
+                st.write("**☀️ 昼の内訳**")
+                st.write(f"フロント: {res['lunch_f']:.2f} h / キッチン: {res['lunch_k']:.2f} h")
+            with d2:
+                st.write("**🌙 夜の内訳**")
+                st.write(f"フロント: {res['night_f']:.2f} h / キッチン: {res['night_k']:.2f} h")
