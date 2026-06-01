@@ -1065,106 +1065,142 @@ if mode == "確定シフト閲覧":
             height=600
         )
 if mode == "清掃記録":
-    st.title("🧹 毎週日曜夜：モップ清掃")
-    
-    # 1. 年月の選択
-    col_y, col_m = st.columns(2)
-    c_today = date.today()
-    c_year = col_y.selectbox("記録年", [c_today.year, c_today.year + 1], index=0)
-    c_month = col_m.selectbox("記録月", range(1, 13), index=c_today.month - 1)
-    
-    log_sheet_name = f"cleaning_log_{c_year}_{c_month:02}"
-    log_state_key = f"clean_data_{c_year}_{c_month}"
+    st.title("🧹 モップ清掃記録")
 
-    if log_state_key not in st.session_state:
-        with st.spinner("最新データを読み込み中..."):
-            raw_gc = None
-            if hasattr(conn, "_client"): raw_gc = conn._client
-            elif hasattr(conn, "client") and hasattr(conn.client, "_client"): raw_gc = conn.client._client
-            elif hasattr(conn, "client"): raw_gc = conn.client
+    # --- パスワードチェック ---
+    if pw != "1234":
+        st.warning("左メニューでパスワードを入力してください。")
+        with st.container(border=True):
+            st.markdown("""
+            ### 🧼 モップ清掃のやり方説明
+            毎週日曜日の夜、動線が落ち着いた21時以降に実施します。
+            
+            *   **A1区間**：199号線側のバックヤード出入り口より左
+            *   **A2区間**：より右
+            *   **B区間**：レジより右・トイレ側
+            
+            **【手順】**
+            1. バケツ用意（なんちゃら洗剤）
+            2. 力いっぱいこする
+            3. 終わったら記録シートを記入する
+            """)
+    else:
+        # --- 管理者モード：ここから表示 ---
+        # 1. 年月の選択
+        col_y, col_m = st.columns(2)
+        c_today = date.today()
+        # 選択肢を自動生成
+        year_list_clean = [c_today.year - 1, c_today.year, c_today.year + 1]
+        c_year = col_y.selectbox("記録年", year_list_clean, index=1)
+        c_month = col_m.selectbox("記録月", range(1, 13), index=c_today.month - 1)
+        
+        log_sheet_name = f"cleaning_log_{c_year}_{c_month:02}"
+        log_state_key = f"clean_data_{c_year}_{c_month}"
 
-            r_raw = None
-            if raw_gc:
-                sh = raw_gc.open_by_url(SPREADSHEET_URL)
-                worksheet_list = [w.title for w in sh.worksheets()]
-                if log_sheet_name in worksheet_list:
-                    r_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=log_sheet_name, ttl=0)
+        # 2. データの読み込み
+        if log_state_key not in st.session_state:
+            with st.spinner("最新データを読み込み中..."):
+                raw_gc = None
+                if hasattr(conn, "_client"): raw_gc = conn._client
+                elif hasattr(conn, "client") and hasattr(conn.client, "_client"): raw_gc = conn.client._client
+                elif hasattr(conn, "client"): raw_gc = conn.client
 
-            sundays = get_sundays(c_year, c_month)
-            day_labels = [s.strftime("%m/%d") for s in sundays]
+                r_raw = None
+                if raw_gc:
+                    sh = raw_gc.open_by_url(SPREADSHEET_URL)
+                    worksheet_list = [w.title for w in sh.worksheets()]
+                    if log_sheet_name in worksheet_list:
+                        r_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=log_sheet_name, ttl=0)
 
-            if r_raw is None or r_raw.empty:
-                # 新規作成：列ごとに型を指定して作る
-                df = pd.DataFrame({
-                    "日付": day_labels,
-                    "①事前準備": [False] * len(sundays),
-                    "②お部屋(基本)": [False] * len(sundays),
-                    "③水回り(仕上げ)": [False] * len(sundays),
-                    "④片付け": [False] * len(sundays),
-                    "担当者/メモ": [""] * len(sundays) # ここは文字列
-                }).set_index("日付")
-            else:
-                # 既存データの整形
-                df = r_raw.set_index(r_raw.columns[0])
-                df = df.reindex(index=day_labels)
-                
-                # 【ここが修正ポイント！】
-                # チェックボックスの列（Bool型）だけを False で埋める
-                bool_cols = ["①事前準備", "②お部屋(基本)", "③水回り(仕上げ)", "④片付け"]
-                for c in bool_cols:
-                    if c in df.columns:
-                        # 既存データの文字(TRUE/1)を本物のチェック（True/False）に変換
-                        df[c] = df[c].map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0", "TRUE.0"])
-                    else:
-                        df[c] = False
-                
-                # メモ欄（Text型）は 空の文字 で埋める
-                if "担当者/メモ" not in df.columns:
-                    df["担当者/メモ"] = ""
+                sundays = get_sundays(c_year, c_month)
+                day_labels = [s.strftime("%m/%d") for s in sundays]
+
+                if r_raw is None or r_raw.empty:
+                    df = pd.DataFrame({
+                        "日付": day_labels,
+                        "A1区間": [False] * len(sundays),
+                        "A2区間": [False] * len(sundays),
+                        "B区間": [False] * len(sundays),
+                        "担当者/一言メモ": [""] * len(sundays)
+                    }).set_index("日付")
                 else:
-                    df["担当者/メモ"] = df["担当者/メモ"].fillna("").astype(str)
+                    df = r_raw.set_index(r_raw.columns[0])
+                    df = df.reindex(index=day_labels)
+                    # チェックボックス列の整形
+                    for c in ["A1区間", "A2区間", "B区間"]:
+                        if c in df.columns:
+                            df[c] = df[c].map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0", "TRUE.0"])
+                        else:
+                            df[c] = False
+                    # メモ欄の整形
+                    if "担当者/一言メモ" not in df.columns:
+                        df["担当者/一言メモ"] = ""
+                    else:
+                        df["担当者/一言メモ"] = df["担当者/一言メモ"].fillna("").astype(str)
 
-            st.session_state[log_state_key] = df
+                st.session_state[log_state_key] = df
 
-    # ---------------------------------------------------------
-    # 2. 入力フォーム（中身を表示）
-    # ---------------------------------------------------------
-    display_log_df = st.session_state[log_state_key]
+        display_log_df = st.session_state[log_state_key]
 
-    st.info("💡 終了したら一番下の保存ボタンを押してください。")
+        # 3. 入力フォーム
+        with st.form(key=f"cleaning_form_{log_sheet_name}"):
+            edited_log = st.data_editor(
+                display_log_df,
+                column_config={
+                    "A1区間": st.column_config.CheckboxColumn("A1"),
+                    "A2区間": st.column_config.CheckboxColumn("A2"),
+                    "B区間": st.column_config.CheckboxColumn("B"),
+                    "担当者/一言メモ": st.column_config.TextColumn("一言メモ", width="large", required=False)
+                },
+                use_container_width=True,
+                key=f"editor_widget_{log_sheet_name}"
+            )
 
-    with st.form(key=f"cleaning_form_{log_sheet_name}"):
-        edited_log = st.data_editor(
-            display_log_df,
-            column_config={
-                "①事前準備": st.column_config.CheckboxColumn("①準備"),
-                "②お部屋(基本)": st.column_config.CheckboxColumn("②部屋"),
-                "③水回り(仕上げ)": st.column_config.CheckboxColumn("③水回"),
-                "④片付け": st.column_config.CheckboxColumn("④片付"),
-                "担当者/メモ": st.column_config.TextColumn("担当者/メモ", width="large", required=False)
-            },
-            use_container_width=True,
-            key=f"editor_widget_{log_sheet_name}"
+            submit_save = st.form_submit_button(label="💾 清掃記録を保存する", use_container_width=True)
+
+            if submit_save:
+                with st.spinner("保存中..."):
+                    if save_sheet_robust(edited_log, log_sheet_name):
+                        st.session_state[log_state_key] = edited_log
+                        st.success("✅ 保存しました！")
+                        time.sleep(1)
+                        st.rerun()
+
+# --- 4. Excel出力機能（文字変換版） ---
+        st.markdown("---")
+        st.subheader("📊 清掃記録をExcelで書き出す")
+        
+        # エクセル出力用にデータを加工する（元の画面のデータは変えずに、コピーを作る）
+        export_df = edited_log.copy()
+        for col in ["A1区間", "A2区間", "B区間"]:
+            if col in export_df.columns:
+                # Trueなら「〇」、Falseなら「ー」に変換
+                export_df[col] = export_df[col].map({True: "済", False: "ー"})
+
+        buffer_clean = io.BytesIO()
+        with pd.ExcelWriter(buffer_clean, engine='xlsxwriter') as writer:
+            # 変換後のデータを書き出す
+            export_df.to_excel(writer, sheet_name='清掃記録')
+            
+            workbook  = writer.book
+            worksheet = writer.sheets['清掃記録']
+            
+            # 書式設定
+            fmt_header = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'align': 'center'})
+            fmt_center = workbook.add_format({'border': 1, 'align': 'center'})
+            fmt_border = workbook.add_format({'border': 1})
+            
+            # 列幅と書式を適用
+            worksheet.set_column('A:A', 15, fmt_center) # 日付
+            worksheet.set_column('B:D', 10, fmt_center) # 各区間の「〇」を中央揃えに
+            worksheet.set_column('E:E', 50, fmt_border) # メモ欄を広く
+
+        st.download_button(
+            label=f"📥 {c_month}月の清掃記録をExcel保存",
+            data=buffer_clean.getvalue(),
+            file_name=f"Cleaning_Log_{c_year}_{c_month:02}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
-        submit_save = st.form_submit_button(label="💾 清掃記録を保存する", use_container_width=True)
-
-        if submit_save:
-            with st.spinner("保存中..."):
-                if save_sheet_robust(edited_log, log_sheet_name):
-                    st.session_state[log_state_key] = edited_log
-                    st.success("✅ 保存しました！お疲れ様でした！✨")
-                    time.sleep(1)
-                    st.rerun()
-
-    # ガイド
-    with st.expander("項目別の詳しいやり方を確認"):
-        st.markdown("""
-        - **① 事前準備**：床の荷物を上に上げる / 窓を閉める / モップにシートをセット
-        - **② お部屋**　：寝室（ベッドまわり） ➔ リビング・ダイニング ➔ 廊下・階段
-        - **③ 水回り**　：キッチン（油ハネ） ➔ 洗面所（髪の毛） ➔ トイレ（一番最後）
-        - **④ 片付け**　：集めたゴミを吸い取る / シートを捨てる / 上に上げた物を元に戻す
-        """)
 if mode == "レジ締め作業":
     st.title("💰 レジ締め作業")
 
