@@ -4,13 +4,19 @@ import calendar
 import random
 import io
 import time
+from datetime import date, timedelta, datetime, timezone # timezoneを追加
 from datetime import date, timedelta  # 
 from datetime import date, timedelta, datetime
 from streamlit_gsheets import GSheetsConnection
 import streamlit.components.v1 as components  # 追加
 import requests
 import json
+# 日本時間 (JST) を定義
+JST = timezone(timedelta(hours=+9), 'JST')
 
+# サーバー時間ではなく「日本の今」を取得する関数
+def get_japan_today():
+    return datetime.now(JST).date()
 def send_line_notification(message):
     """LINE Messaging APIを使ってグループに通知を送る"""
     # ここに取得したアクセストークンを貼り付け
@@ -112,7 +118,6 @@ year, month = v_date.year, v_date.month
 num_days = calendar.monthrange(year, month)[1]
 WEEKDAYS_JP = ["月", "火", "水", "木", "金", "土", "日"]
 column_names = [f"{d}({WEEKDAYS_JP[calendar.weekday(year, month, d)]})" for d in range(1, num_days + 1)]
-
 # 3. スプレッドシートの「タブ名」を決める
 REQ_SHEET = f"req_{year}_{month:02}"
 
@@ -947,7 +952,8 @@ if mode == "確定シフト閲覧":
     """, unsafe_allow_html=True)
 
     # --- 1. データの準備（つぶやき専用読み込み） ---
-    today = date.today()
+    today = get_japan_today()
+    t_day = today.day
     date_str_today = today.strftime("%Y/%m/%d")
     tweet_sheet = "daily_tweets"
     
@@ -1250,7 +1256,7 @@ if mode == "レジ締め作業":
     """, unsafe_allow_html=True)
 
     # 1. 準備
-    today_now = date.today()
+    today_now = get_japan_today()
     date_str = today_now.strftime("%Y/%m/%d")
     shift_sheet = f"shift_{today_now.year}_{today_now.month:02}"
     layout_sheet = "daily_layout"
