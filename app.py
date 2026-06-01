@@ -8,7 +8,31 @@ from datetime import date, timedelta  #
 from datetime import date, timedelta, datetime
 from streamlit_gsheets import GSheetsConnection
 import streamlit.components.v1 as components  # 追加
+import requests
+import json
 
+def send_line_notification(message):
+    """LINE Messaging APIを使ってグループに通知を送る"""
+    # ここに取得したアクセストークンを貼り付け
+    LINE_ACCESS_TOKEN = "CWtJrVJ9DydSnL/meqMN5K8+9gV3j3zLWjlTFHuHbj9K7wNPgZah76+RzB77c/1ASW+IReRwpVetUSavMIitb85I7pmCp7hfJpY7931zzr6INTNzdFPBVXgnMehg5j+LN9bxO6aY1AIXM/k5cAwr0QdB04t89/1O/w1cDnyilFU="
+    # ここに送信先のグループID（または自分のユーザーID）を貼り付け
+    LINE_DESTINATION_ID = "U627c8971cff4e882b7f8673addc08ffa"
+    
+    url = "https://api.line.me/v2/bot/message/push"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {LINE_ACCESS_TOKEN}"
+    }
+    data = {
+        "to": LINE_DESTINATION_ID,
+        "messages": [{"type": "text", "text": message}]
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, data=json.dumps(data))
+        return response.status_code == 200
+    except Exception:
+        return False
 def load_sheet_no_cache(worksheet_name, default_df):
     try:
         df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=worksheet_name, ttl=0)
@@ -321,11 +345,13 @@ if mode == "従業員名簿管理":
                 ---
 
                 ### 👥 1. 従業員名簿管理
+                * まずパスワードを入力してください
                 *   **グループの役割**: 
                     - `HD`: ホール昼 / `HN`: ホール夜 / `KD`: キッチン昼 / `KN`: キッチン夜
                     - `W`: 社員・共通
                 *   **週希望**: 自動生成時に「その週に最大何日入れるか」の基準になります。この数字が上限になるので絶対に超えることはないですが少なくなることはあります。
                 *   **レジ締め/デザート**: 特定のスキルが必要な時間帯に優先的に割り振られます。
+                    **お知らせ機能**: お知らせの編集を開くと常に表示されるメッセージを編集することができます。休み希望の注意点などあれば入力してください。
 
                 ### 📅 2. 休み希望入力
                 *   **スタッフ用**: カレンダー形式でスマホから直感的に入力可能。
@@ -349,8 +375,9 @@ if mode == "従業員名簿管理":
                 *   **初期表示**: 開いた瞬間に『本日のシフト』がバーに反映されます。一度保存した後は、その実績データが優先して表示されます。
 
                 ### 🧹 6. 清掃記録
-                *   毎週日曜のモップ清掃をチェックリスト化。店長が自宅から完了を確認できます。
-                *   保存すると月ごとのログとしてスプレッドシートに蓄積されます。
+                *   パスワードを入力してください
+                *   毎週日曜のモップ清掃をチェックリスト化。管理者のみ記録できます。
+                *   保存すると月ごとの記録としてシートに蓄積されます。入力、エクセル出力したい月を選択して利用してください。
 
                 ---
                 **💡 トラブルかな？と思ったら**
@@ -873,9 +900,17 @@ elif mode == "シフト自動生成（案）・シフトアップロード":
                     
                     # スプレッドシートへ保存
                     target_sheet = f"shift_{year}_{month:02}"
+# --- シフトアップロードの保存成功後の処理 ---
                     if save_sheet_robust(f_df, target_sheet):
                         st.cache_data.clear()
-                        st.success(f"再計算完了！ {target_sheet} を公開しました。")
+                        
+                        # --- ここでLINE通知を実行 ---
+                        line_msg = f"📢 ジョイフル小倉店 シフト公開のお知らせ\n\n{year}年{month}月のシフト予定が公開されました！\n確認してください！✨\nhttps://joyful-shift-jf9lwlpz2kpjovgwspgkcq.streamlit.app/"
+                        if send_line_notification(line_msg):
+                            st.success("✅ スプレッドシートを更新し、LINEグループに通知しました！")
+                        else:
+                            st.warning("⚠️ スプレッドシートは更新されましたが、LINE通知に失敗しました。")
+                        
                         time.sleep(1)
                         st.rerun()
 st.sidebar.image("cafe_logo.png", width=200)
