@@ -893,13 +893,14 @@ if mode == "確定シフト閲覧":
             display: inline-block;
             background-color: #FFF176;
             color: #333;
-            padding: 4px 10px;
-            border-radius: 15px;
-            font-size: 0.8rem;
-            margin-left: 10px;
+            padding: 4px 12px;
+            border-radius: 18px;
+            font-size: 0.85rem;
+            margin-left: 8px;
             position: relative;
             box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
-            animation: fadeInUp 0.6s ease-out;
+            animation: fadeInUp 0.5s ease-out;
+            border: 1px solid #FDD835;
         }
         .tweet-bubble::after {
             content: '';
@@ -911,39 +912,55 @@ if mode == "確定シフト閲覧":
             border-right: 8px solid #FFF176;
             border-bottom: 5px solid transparent;
         }
-        div[data-testid="column"] {
+        /* 行のレイアウト調整 */
+        .worker-row {
             display: flex;
             align-items: center;
+            margin-bottom: 8px;
+            min-height: 35px;
         }
         </style>
     """, unsafe_allow_html=True)
 
-    # --- 1. つぶやきデータの読み込み準備 ---
+    # --- 1. データの準備（省エネ読み込み） ---
     today = date.today()
     date_str_today = today.strftime("%Y/%m/%d")
     tweet_sheet = "daily_tweets"
     
-    # 全つぶやきをロード
-    all_tweets_df = load_sheet_no_cache(tweet_sheet, pd.DataFrame(columns=["日付", "名前", "メッセージ"]))
-    
-    # 今日の分だけ抽出して辞書化 {名前: メッセージ}
-    if not all_tweets_df.empty and "日付" in all_tweets_df.columns:
-        today_tweets = all_tweets_df[all_tweets_df["日付"] == date_str_today]
-        tweet_dict = dict(zip(today_tweets["名前"], today_tweets["メッセージ"]))
-    else:
-        tweet_dict = {}
+    # 【安定化】API通信を最小限にするため、session_state に保持
+    # リロードされたとき、またはデータがないときだけ読みに行く
+    if "tweet_data_cache" not in st.session_state:
+        with st.spinner("つぶやきを読み込み中..."):
+            all_tweets = load_sheet_no_cache(tweet_sheet, pd.DataFrame(columns=["日付", "名前", "メッセージ"]))
+            # インデックスを確実にリセット
+            if not all_tweets.empty:
+                all_tweets = all_tweets.reset_index()
+            st.session_state.tweet_data_cache = all_tweets
 
-    # --- 2. 出勤メンバー表示ロジック（既存の続き） ---
+    # 今日の分のつぶやきだけを辞書化して表示しやすくする
+    df_tweets = st.session_state.tweet_data_cache
+    today_tweet_dict = {}
+    if not df_tweets.empty:
+        today_only = df_tweets[df_tweets["日付"] == date_str_today]
+        today_tweet_dict = dict(zip(today_only["名前"], today_only["メッセージ"]))
+
+    # シフト表の読み込み
     t_day = today.day
     t_month = today.month
     t_year = today.year
     day_prefix = f"{t_day}(" 
     today_sheet = f"shift_{t_year}_{t_month:02}"
-    today_df = load_sheet_no_cache(today_sheet, pd.DataFrame())
     
+    # シフト表自体も頻繁に読み込まないようにキャッシュ版を使用
+    today_df = load_sheet_cached(today_sheet)
+    if today_df is not None:
+        today_df = today_df.set_index(today_df.columns[0])
+    else:
+        today_df = pd.DataFrame()
+
     with st.expander(f"🏃 本日 {t_month}月{t_day}日の出勤メンバー", expanded=True):
         if today_df.empty:
-            st.write(f"シート「{today_sheet}」が見つからないか、空っぽです。")
+            st.write(f"本日のシフトはまだ登録されていません。")
         else:
             target_col = None
             for col in today_df.columns:
@@ -952,8 +969,9 @@ if mode == "確定シフト閲覧":
                     break
             
             if target_col is None:
-                st.write(f"今日の日付「{t_day}日」の列が見当たりません。")
+                st.write(f"今日の日付列が見当たりません。")
             else:
+                # 出勤者を抽出
                 workers = today_df[ (today_df[target_col].notna()) & 
                                     (today_df[target_col].astype(str).str.strip() != "✖") & 
                                     (today_df[target_col].astype(str).str.strip() != "") ].copy()
@@ -965,46 +983,49 @@ if mode == "確定シフト閲覧":
                     col_hall, col_kitchen = st.columns(2)
                     workers['gp_clean'] = workers[group_col].astype(str).str.strip()
                     
-                    # --- ヘルパー関数：名前＋つぶやき＋入力ボタンを表示 ---
-                    def render_worker_line(name, time_val, key_suffix):
-                        cols = st.columns([0.45, 0.45, 0.1])
-                        with cols[0]:
-                            # 時間と名前を表示
-                            st.markdown(f"**{time_val}** : {name}", unsafe_allow_html=True)
-                        with cols[1]:
-                            # つぶやきがあればアニメーション付きで表示
-                            if name in tweet_dict:
-                                st.markdown(f'<span class="tweet-bubble">{tweet_dict[name]}</span>', unsafe_allow_html=True)
-                        with cols[2]:
-                            # つぶやき入力用ポップオーバー
-                            with st.popover("💬", help="意気込みを投稿"):
-                                new_msg = st.text_input(f"{name}さんのつぶやき", max_chars=20, key=f"in_{key_suffix}")
-                                if st.button("送信", key=f"btn_{key_suffix}"):
-                                    # 保存処理
-                                    new_row = pd.DataFrame([{"日付": date_str_today, "名前": name, "メッセージ": new_msg}])
-                                    # 重複削除して合体
-                                    updated_tweets = pd.concat([all_tweets_df[~((all_tweets_df["日付"] == date_str_today) & (all_tweets_df["名前"] == name))], new_row])
-                                    if save_sheet_robust(updated_tweets, tweet_sheet):
-                                        st.success("投稿しました！")
-                                        time.sleep(0.5)
-                                        st.rerun()
+                    # 共通表示関数
+                    def draw_member(name, time_val, i_key):
+                        # HTMLでレイアウトを組む
+                        tweet_html = ""
+                        if name in today_tweet_dict:
+                            msg = today_tweet_dict[name]
+                            tweet_html = f'<span class="tweet-bubble">{msg}</span>'
+                        
+                        # 名前列
+                        c_name, c_pop = st.columns([0.85, 0.15])
+                        with c_name:
+                            st.markdown(f'<div class="worker-row"><strong>{time_val}</strong> : {name} {tweet_html}</div>', unsafe_allow_html=True)
+                        with c_pop:
+                            with st.popover("💬", help="意気込みを入力"):
+                                new_msg = st.text_input(f"{name}さんのつぶやき", max_chars=20, key=f"txt_{i_key}")
+                                if st.button("送信", key=f"btn_{i_key}", use_container_width=True):
+                                    if new_msg:
+                                        with st.spinner("送信中..."):
+                                            # 1. ローカルデータを更新
+                                            new_entry = pd.DataFrame([{"日付": date_str_today, "名前": name, "メッセージ": new_msg}])
+                                            updated_df = pd.concat([st.session_state.tweet_data_cache[
+                                                ~((st.session_state.tweet_data_cache["日付"] == date_str_today) & (st.session_state.tweet_data_cache["名前"] == name))
+                                            ], new_entry], ignore_index=True)
+                                            
+                                            # 2. スプレッドシートに保存（名前をインデックスに戻さず、そのまま保存）
+                                            if save_sheet_robust(updated_df.set_index("日付"), tweet_sheet):
+                                                st.session_state.tweet_data_cache = updated_df
+                                                st.success("投稿完了！")
+                                                time.sleep(0.5)
+                                                st.rerun()
 
                     with col_hall:
                         st.markdown("### 👔 ホール")
                         hall_list = workers[workers['gp_clean'].str.contains('H|W|不明', na=False)].sort_values(by=target_col)
-                        if not hall_list.empty:
-                            for idx, (name, row) in enumerate(hall_list.iterrows()):
-                                render_worker_line(name, row[target_col], f"h_{idx}")
-                        else: st.caption("なし")
+                        for i, (name, row) in enumerate(hall_list.iterrows()):
+                            draw_member(name, row[target_col], f"h_{i}")
 
                     with col_kitchen:
                         st.markdown("### 🍳 キッチン")
                         kit_list = workers[workers['gp_clean'].str.contains('K', na=False)].sort_values(by=target_col)
-                        if not kit_list.empty:
-                            for idx, (name, row) in enumerate(kit_list.iterrows()):
-                                render_worker_line(name, row[target_col], f"k_{idx}")
-                        else: st.caption("なし")
-    
+                        for i, (name, row) in enumerate(kit_list.iterrows()):
+                            draw_member(name, row[target_col], f"k_{i}")
+
     st.divider()
     # --- (以下、年月選択や全体表のコードはそのまま) ---
 
