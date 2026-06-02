@@ -96,7 +96,10 @@ def calc_work_and_break(val):
     except:
         return 0.0, 0.0
 st.set_page_config(page_title="ジョイフル シフト管理", layout="wide")
-
+# --- 30分刻みの時間リスト作成 ---
+TIME_OPTIONS = [f"{h:02d}:{m:02d}" for h in range(10, 25) for m in [0, 30]]
+# 24:30以降は不要なので24:00までにする
+TIME_OPTIONS = TIME_OPTIONS[:-1]
 # --- 1. スプレッドシート接続設定 ---
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1dDyKAXYsHZg1ta4l7te84uSbhSea-FoyVgTeo4-kgkI/edit?gid=0#gid=0"
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -620,17 +623,57 @@ elif mode == "シフト自動生成（案）・シフトアップロード":
             h_n_we = st.number_input("ホール夜 ", 1, 10, 4, key="h_n_we")
             k_n_we = st.number_input("キッチン夜 ", 1, 10, 4, key="k_n_we")
 
-    st.markdown("---")
-    st.write("設定が完了したら、下のボタンを押してシフトを生成してください。")
-    # 生成実行ボタン
-    gen_button = st.button("シフトを生成・再生成（約23秒）", use_container_width=True)
 
+# --- 1.5 詳細な枠時間の設定エリア ---
+    with st.expander("🕒 詳細な枠時間の設定（30分刻み）"):
+        st.write("各ポジションの人数分、勤務時間を設定してください。")
+        
+        def render_time_sliders(label, count, key_prefix):
+            times = []
+            cols = st.columns(2) # 2列で見やすく表示
+            for i in range(count):
+                # 基本のラベル作成
+                display_label = f"{label} {i+1}人目"
+                
+                # ホールの1人目だけ特別な表記を追加
+                if "ホール" in label and i == 0:
+                    if "昼" in label:
+                        display_label += " (デザート)"
+                    elif "夜" in label:
+                        display_label += " (レジ締め)"
+                
+                with cols[i % 2]:
+                    t = st.select_slider(
+                        display_label,
+                        options=TIME_OPTIONS,
+                        value=("10:00", "18:00") if "昼" in label else ("18:00", "23:00"),
+                        key=f"{key_prefix}_{i}"
+                    )
+                    times.append(f"{t[0]}-{t[1]}")
+            return times
+
+        tab_wd, tab_we = st.tabs(["🚃 平日の時間設定", "🌞 金土日の時間設定"])
+        
+        with tab_wd:
+            wd_hd_slots = render_time_sliders("ホール昼", h_d_wd, "wd_hd")
+            wd_kd_slots = render_time_sliders("キッチン昼", k_d_wd, "wd_kd")
+            wd_hn_slots = render_time_sliders("ホール夜", h_n_wd, "wd_hn")
+            wd_kn_slots = render_time_sliders("キッチン夜", k_n_wd, "wd_kn")
+
+        with tab_we:
+            we_hd_slots = render_time_sliders("ホール昼", h_d_we, "we_hd")
+            we_kd_slots = render_time_sliders("キッチン昼", k_d_we, "we_kd")
+            we_hn_slots = render_time_sliders("ホール夜", h_n_we, "we_hn")
+            we_kn_slots = render_time_sliders("キッチン夜", k_n_we, "we_kn")
     # セッション状態（貯金箱）の初期化
     if "last_generated_df" not in st.session_state:
         st.session_state.last_generated_df = None
     if "last_shortage_alerts" not in st.session_state:
         st.session_state.last_shortage_alerts = []
-
+    st.markdown("---")
+    st.write("設定が完了したら、下のボタンを押してシフトを生成してください。")
+    # 生成実行ボタン
+    gen_button = st.button("シフトを生成・再生成（約23秒）", use_container_width=True)
     # --- 2. 生成ロジック（ボタンが押されたときだけ実行） ---
     if gen_button:
         progress_bar = st.progress(0)
@@ -697,11 +740,15 @@ elif mode == "シフト自動生成（案）・シフトアップロード":
                         d = int(col.split('(')[0])
                         d_idx = calendar.weekday(year, month, d)
                         
+# --- 曜日による設定スロットの決定 ---
                         if d_idx >= 4: # 金土日
-                            n_hd, n_kd, n_hn, n_kn = h_d_we, k_d_we, h_n_we, k_n_we
+                            s_hd, s_kd, s_hn, s_kn = we_hd_slots, we_kd_slots, we_hn_slots, we_kn_slots
                         else: # 月〜木
-                            n_hd, n_kd, n_hn, n_kn = h_d_wd, k_d_wd, h_n_wd, k_n_wd
+                            s_hd, s_kd, s_hn, s_kn = wd_hd_slots, wd_kd_slots, wd_hn_slots, wd_kn_slots
+                
+                        n_hd, n_kd, n_hn, n_kn = len(s_hd), len(s_kd), len(s_hn), len(s_kn)
 
+                # 候補者のリストアップ（ロジックはそのまま）
                         def get_eligible_staff(group_name, is_wildcard=False):
                             pool = [n for n in master_df[master_df['グループ'] == group_name]['名前'].tolist() 
                                     if not req_load.at[n, col] and (is_wildcard or t_week_counts[n] < int(user_limits.get(n, 3)))]
@@ -714,31 +761,28 @@ elif mode == "シフト自動生成（案）・シフトアップロード":
                         kn_pool = get_eligible_staff('KN')
                         w_pool = get_eligible_staff('W', is_wildcard=True)
 
-                        # ホール昼
+                # --- 1. ホール昼(HD)の割り当て ---
                         hd_res = []
                         hd_leader = next((n for n in (hd_pool + w_pool) if n not in assigned_today and master_df.set_index('名前').at[n, 'デザート']), None)
                         if hd_leader:
-                            hd_res.append({"スロット": "10:00-18:00", "担当者": hd_leader})
+                            hd_res.append({"スロット": s_hd[0], "担当者": hd_leader}) # 設定された1人目の時間を使う
                             assigned_today.append(hd_leader)
-                        hd_res += assign_slots(["10:00-18:00"] * (n_hd - len(hd_res)), hd_pool, w_pool, assigned_today)
+                # 残りの人数分、設定された時間(s_hd)を割り当てる
+                        hd_res += assign_slots(s_hd[len(hd_res):n_hd], hd_pool, w_pool, assigned_today)
 
-                        # キッチン昼
-                        kd_res = assign_slots(["10:00-18:00"] * n_kd, kd_pool, w_pool, assigned_today)
+                # --- 2. キッチン昼(KD)の割り当て ---
+                        kd_res = assign_slots(s_kd, kd_pool, w_pool, assigned_today)
 
-                        # ホール夜
+                # --- 3. ホール夜(HN)の割り当て ---
                         hn_res = []
                         hn_leader = next((n for n in (hn_pool + w_pool) if n not in assigned_today and master_df.set_index('名前').at[n, 'レジ締め']), None)
                         if hn_leader:
-                            hn_res.append({"スロット": "18:00-23:00", "担当者": hn_leader})
+                            hn_res.append({"スロット": s_hn[0], "担当者": hn_leader}) # 設定された1人目の時間を使う
                             assigned_today.append(hn_leader)
-                        hn_slots = ["18:00-23:00", "18:00-23:00", "18:00-22:00", "19:00-23:00"]
-                        if n_hn > 4: hn_slots += ["18:00-23:00"] * (n_hn - 4)
-                        hn_res += assign_slots(hn_slots[:n_hn-len(hn_res)], hn_pool, w_pool, assigned_today)
+                        hn_res += assign_slots(s_hn[len(hn_res):n_hn], hn_pool, w_pool, assigned_today)
 
-                        # キッチン夜
-                        kn_slots = ["18:00-23:00", "18:00-23:00", "18:00-22:00", "19:00-23:00"]
-                        if n_kn > 4: kn_slots += ["18:00-23:00"] * (n_kn - 4)
-                        kn_res = assign_slots(kn_slots[:n_kn], kn_pool, w_pool, assigned_today)
+                # --- 4. キッチン夜(KN)の割り当て ---
+                        kn_res = assign_slots(s_kn, kn_pool, w_pool, assigned_today)
 
                         for res_list, pos_name in [(hd_res, "ホール昼"), (kd_res, "キッチン昼"), (hn_res, "ホール夜"), (kn_res, "キッチン夜")]:
                             for item in res_list:
@@ -1218,24 +1262,25 @@ if mode == "清掃記録":
                 # Trueなら「〇」、Falseなら「ー」に変換
                 export_df[col] = export_df[col].map({True: "済", False: "ー"})
 
+# Excel出力ボタンの中の処理
         buffer_clean = io.BytesIO()
         with pd.ExcelWriter(buffer_clean, engine='xlsxwriter') as writer:
-            # 変換後のデータを書き出す
-            export_df.to_excel(writer, sheet_name='清掃記録')
-            
+            export_df.to_excel(writer, sheet_name='清掃記録', startrow=2) # 2行目からデータを開始
+    
             workbook  = writer.book
             worksheet = writer.sheets['清掃記録']
-            
-            # 書式設定
-            fmt_header = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'align': 'center'})
-            fmt_center = workbook.add_format({'border': 1, 'align': 'center'})
-            fmt_border = workbook.add_format({'border': 1})
-            
-            # 列幅と書式を適用
-            worksheet.set_column('A:A', 15, fmt_center) # 日付
-            worksheet.set_column('B:D', 10, fmt_center) # 各区間の「〇」を中央揃えに
-            worksheet.set_column('E:E', 50, fmt_border) # メモ欄を広く
+    
+    # --- ここがポイント：画像をExcelに挿入 ---
+    # insert_image(行, 列, 画像パス, オプション)
+    # 'cleaning_map.png' というファイル名で保存されている前提
+            try:
+                worksheet.insert_image('G2', 'cleaning_map.png', {'x_scale': 0.5, 'y_scale': 0.5})
+            except:
+                pass # 画像がない場合はスキップ
 
+    # 書式設定（表をコンパクトにする）
+            fmt_border = workbook.add_format({'border': 1})
+            worksheet.set_column('A:F', 10, fmt_border)
         st.download_button(
             label=f"📥 {c_month}月の清掃記録をExcel保存",
             data=buffer_clean.getvalue(),
