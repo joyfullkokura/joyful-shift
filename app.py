@@ -13,8 +13,80 @@ import requests
 import json
 # 日本時間 (JST) を定義
 JST = timezone(timedelta(hours=+9), 'JST')
+def export_cleaning_handwriting_sheet(year, period_label):
+    if period_label == "1-4月": months = [1, 2, 3, 4]
+    elif period_label == "5-8月": months = [5, 6, 7, 8]
+    else: months = [9, 10, 11, 12]
 
-# サーバー時間ではなく「日本の今」を取得する関数
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+        workbook = writer.book
+        worksheet = workbook.add_worksheet(f"清掃用_{period_label}")
+        
+        # --- 【超重要】A4縦1枚に強制的に収める設定 ---
+        worksheet.set_portrait()
+        worksheet.set_paper(9) # A4
+        worksheet.set_margins(0.3, 0.3, 0.3, 0.3) # 余白をさらに狭く
+        worksheet.center_horizontally()
+        
+        # これが「1枚に収める」魔法の命令です
+        worksheet.fit_to_pages(1, 1) 
+
+        # --- 書式 ---
+        fmt_title = workbook.add_format({'bold': True, 'size': 18, 'align': 'center', 'valign': 'vcenter'})
+        fmt_month = workbook.add_format({'bold': True, 'size': 11, 'bg_color': '#F2F2F2', 'border': 2})
+        fmt_head = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'size': 9})
+        fmt_cell = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'size': 10})
+        fmt_memo = workbook.add_format({'border': 1, 'valign': 'top', 'size': 9})
+
+        # 1. タイトル
+        worksheet.set_row(0, 30)
+        worksheet.merge_range('A1:J1', f"🧹 {year}年 {period_label} モップ清掃チェック表", fmt_title)
+
+        # 2. 画像（横幅に収まるようサイズを微調整）
+        try:
+            worksheet.insert_image('B2', 'cleaning_map.png', {
+                'x_scale': 0.45, 
+                'y_scale': 0.45,
+                'x_offset': 10,
+                'y_offset': 5
+            })
+        except: pass
+
+        curr_row = 12 # 画像の下から開始（行間を詰める）
+
+        # 3. 4ヶ月分のループ
+        for m in months:
+            worksheet.set_row(curr_row, 18)
+            worksheet.merge_range(curr_row, 0, curr_row, 9, f" 【{m}月】", fmt_month)
+            curr_row += 1
+            
+            # ヘッダー
+            worksheet.set_row(curr_row, 18)
+            headers = ["清掃日", "①", "②", "③", "④", "⑤", "⑥", "⑦", "担当", "補足"]
+            for c, h in enumerate(headers):
+                worksheet.write(curr_row, c, h, fmt_head)
+            curr_row += 1
+
+            # 日曜日
+            sundays = get_sundays(year, m)
+            for s in sundays:
+                worksheet.set_row(curr_row, 28) # 高さを少し抑える
+                worksheet.write(curr_row, 0, s.strftime("%m/%d(日)"), fmt_cell)
+                for c in range(1, 8):
+                    worksheet.write(curr_row, c, "", fmt_cell)
+                worksheet.write(curr_row, 8, "", fmt_cell)
+                worksheet.write(curr_row, 9, "", fmt_memo)
+                curr_row += 1
+            curr_row += 1 # 月の間の余白を1行にする
+
+        # --- 【重要】横幅がはみ出さないように列幅をミリ単位で調整 ---
+        worksheet.set_column('A:A', 11) # 日付
+        worksheet.set_column('B:H', 3.2) # ①〜⑦（細く！）
+        worksheet.set_column('I:I', 11) # 担当
+        worksheet.set_column('J:J', 28) # 補足（ここが長すぎると2ページ目に飛ぶ）
+
+    return buffer.getvalue()
 def get_japan_today():
     return datetime.now(JST).date()
 def send_line_notification(message):
@@ -727,7 +799,7 @@ elif mode == "シフト自動生成（案）・シフトアップロード":
                 min_shortage_in_block = 999
                 
                 # 指定回数試行して最も欠員の少ないパターンを探す
-                for trial in range(70):
+                for trial in range(100):
                     trial_df = t_monthly_shift_df.copy()
                     t_week_counts = {name: 0 for name in ALL_NAMES}
                     trial_alerts = []
@@ -1254,7 +1326,6 @@ if mode == "清掃記録":
         st.subheader("📊 印刷用Excel出力")
         
         if st.button(f"📥 {c_month}月の清掃報告書を作成"):
-            # データ加工（「済」の文字を太く強調するため、データのみ先に抽出）
             export_df = edited_log.copy()
             for i in range(1, 8):
                 col = f"{i}区画"
@@ -1262,71 +1333,60 @@ if mode == "清掃記録":
 
             buffer_clean = io.BytesIO()
             with pd.ExcelWriter(buffer_clean, engine='xlsxwriter') as writer:
-                # 1. 表を中段に配置 (少し下げて開始)
-                export_df.to_excel(writer, sheet_name='清掃報告書', startrow=4, startcol=0)
-                
+                # 1. 開始行を下げる
+                export_df.to_excel(writer, sheet_name='清掃報告書', startrow=5, startcol=0)
                 workbook  = writer.book
                 worksheet = writer.sheets['清掃報告書']
                 
-                # --- A4横・印刷設定 ---
-                worksheet.set_landscape() # 横向き
-                worksheet.set_paper(9)    # A4サイズ
-                worksheet.set_margins(0.5, 0.5, 0.5, 0.5) # 余白を狭く
-                
-                # --- 書式設定 ---
-                # タイトル用
-                fmt_title = workbook.add_format({'bold': True, 'size': 18, 'align': 'center', 'valign': 'vcenter'})
-                # 表のヘッダー用
-                fmt_header = workbook.add_format({'bold': True, 'bg_color': '#E0E0E0', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'size': 12})
-                # 表のデータ用
-                fmt_data = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'size': 12})
-                # 「済」だけ赤文字で目立たせる
-                fmt_done = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'size': 12, 'font_color': '#FF0000', 'bold': True})
-                # 判子欄用
-                fmt_stamp = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'top', 'size': 10, 'color': '#666666'})
+                # A4縦・中央配置
+                worksheet.set_portrait()
+                worksheet.center_horizontally()
+                worksheet.set_margins(0.5, 0.5, 0.5, 0.5)
 
-                # --- 1. レイアウト：タイトル ---
-                worksheet.merge_range('A1:I2', f"ジョイフル小倉店 {c_year}年{c_month}月 モップ清掃報告書", fmt_title)
+                # 書式
+                fmt_title = workbook.add_format({'bold': True, 'size': 22, 'align': 'center', 'valign': 'vcenter'})
+                fmt_header = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'size': 12})
+                fmt_data = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'size': 14})
+                fmt_done = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'size': 14, 'font_color': '#FF0000', 'bold': True})
+                fmt_stamp = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'top', 'size': 11})
 
-                # --- 2. レイアウト：列幅と行の高さ ---
-                worksheet.set_column('A:A', 14) # 日付
-                worksheet.set_column('B:H', 6)  # ①〜⑦
-                worksheet.set_column('I:I', 35) # メモ欄を長く
-                for r in range(4, 10): # データ行を高くして見やすく
-                    worksheet.set_row(r, 30)
+                # タイトル（1行目を高くしてドーンと出す）
+                worksheet.set_row(1, 45)
+                worksheet.merge_range('A2:I2', f"ジョイフル小倉店 {c_year}年{c_month}月 モップ清掃報告書", fmt_title)
 
-                # --- 3. データの再書き込み（書式適用） ---
-                # pandasが出力したデータを一旦消して、書式付きで上書き
+                # 列幅を広げる
+                worksheet.set_column('A:A', 15) # 日付
+                worksheet.set_column('B:H', 7)  # ①〜⑦
+                worksheet.set_column('I:I', 40) # メモ
+
+                # ヘッダーと行の高さを大きく
+                worksheet.set_row(5, 30)
                 headers = ["日付", "①", "②", "③", "④", "⑤", "⑥", "⑦", "一言メモ"]
                 for c_idx, val in enumerate(headers):
-                    worksheet.write(4, c_idx, val, fmt_header)
+                    worksheet.write(5, c_idx, val, fmt_header)
 
                 for r_idx, (date_label, row) in enumerate(export_df.iterrows()):
-                    worksheet.write(5 + r_idx, 0, date_label, fmt_data)
+                    worksheet.set_row(6 + r_idx, 45) # データの行をかなり高く
+                    worksheet.write(6 + r_idx, 0, date_label, fmt_data)
                     for c_idx in range(1, 8):
                         val = row[f"{c_idx}区画"]
                         fmt = fmt_done if val == "済" else fmt_data
-                        worksheet.write(5 + r_idx, c_idx, val, fmt)
-                    worksheet.write(5 + r_idx, 8, row["担当者/一言メモ"], fmt_data)
+                        worksheet.write(6 + r_idx, c_idx, val, fmt)
+                    worksheet.write(6 + r_idx, 8, row["担当者/一言メモ"], fmt_data)
 
-                # --- 4. 判子欄（マネージャー確認印） ---
-                # 表の右下に配置
-                worksheet.write('I11', '店長確認印', fmt_stamp)
-                worksheet.merge_range('I12:I14', '', fmt_stamp) # 判子を押す空欄
+                # 判子欄（表の右下に大きく）
+                worksheet.write('I12', '店長確認印', fmt_stamp)
+                worksheet.merge_range('I13:I15', '', fmt_stamp)
 
-                # --- 5. 魔法の処理：画像を左下にドーンと配置 ---
+                # 画像を巨大化して、下の余白を完全に埋める
                 try:
-                    # 表の下（11行目以降）にマップを大きく配置
-                    # A1横幅に合わせてスケールを調整
-                    worksheet.insert_image('A11', 'cleaning_map.png', {
-                        'x_scale': 0.65, 
-                        'y_scale': 0.65,
-                        'x_offset': 5,
-                        'y_offset': 15
+                    worksheet.insert_image('A12', 'cleaning_map.png', {
+                        'x_scale': 0.85, # 85%まで拡大
+                        'y_scale': 0.85,
+                        'x_offset': 10,
+                        'y_offset': 10
                     })
-                    st.toast("Excelに画像を最適化して配置しました！")
-                except:
-                    st.error("画像ファイル 'cleaning_map.png' が見つかりませんでした。")
+                except: pass
 
             st.download_button(
                 label="📥 印刷用Excelをダウンロード",
@@ -1334,6 +1394,32 @@ if mode == "清掃記録":
                 file_name=f"Cleaning_Report_{c_year}_{c_month:02}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+
+# mode == "清掃記録" の管理者用エリア（pw == "1234" の中）の最後に追加
+    if pw == "1234":
+        st.markdown("---")
+        st.subheader("🖨️ 掲示用ワークシート(4ヶ月分)の作成")
+        st.write("A4縦1枚に4ヶ月分のチェック欄とマップをまとめます。")
+        
+        c_today = date.today()
+        # 年と期間の選択
+        col_y_clean, col_p_clean = st.columns(2)
+        target_y_clean = col_y_clean.selectbox("作成年", [c_today.year, c_today.year + 1], key="y_clean_v3")
+        target_p_clean = col_p_clean.selectbox("期間を選択", ["1-4月", "5-8月", "9-12月"], key="p_clean_v3")
+
+        if st.button("📄 4ヶ月分一括シート(Excel)を生成"):
+            with st.spinner("Excelを作成中..."):
+                try:
+                    clean_template = export_cleaning_handwriting_sheet(target_y_clean, target_p_clean)
+                    st.download_button(
+                        label=f"📥 {target_y_clean}年 {target_p_clean}のシートを保存",
+                        data=clean_template,
+                        file_name=f"Cleaning_Worksheet_{target_y_clean}_{target_p_clean}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    st.success("作成しました！")
+                except Exception as e:
+                    st.error(f"作成エラーが発生しました: {e}")
 if mode == "レジ締め作業":
     st.title("💰 レジ締め作業")
 
@@ -1407,9 +1493,9 @@ if mode == "レジ締め作業":
     st.subheader("👥 スタッフの追加")
     c_add1, c_add2 = st.columns([3, 1])
     with c_add1:
-        new_worker = st.selectbox("新しく配置に追加するスタッフ", ["(選択してください)"] + ALL_NAMES, label_visibility="collapsed")
+        new_worker = st.selectbox("新しく追加するスタッフ", ["(選択してください)"] + ALL_NAMES, label_visibility="collapsed")
     with c_add2:
-        if st.button("➕ 配置に追加", use_container_width=True) and new_worker != "(選択してください)":
+        if st.button("➕ 追加", use_container_width=True) and new_worker != "(選択してください)":
             match = master_df[master_df['名前'] == new_worker]
             gp = match['グループ'].values[0] if not match.empty else "不明"
             st.session_state.daily_layout_list.append({
