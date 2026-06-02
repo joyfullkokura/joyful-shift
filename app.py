@@ -1154,37 +1154,43 @@ if mode == "清掃記録":
 
     # --- パスワードチェック ---
     if pw != "1234":
-        st.warning("左メニューでパスワードを入力してください。")
+        st.warning("管理者用メニューです。パスワードを入力してください。")
+        # スタッフ向けの案内図だけ表示
+        try:
+            st.image("cleaning_map.png", caption="清掃区画マップ（①〜⑦）", use_container_width=True)
+        except:
+            st.info("清掃マップ画像（cleaning_map.png）を準備してください。")
+            
         with st.container(border=True):
             st.markdown("""
-            ### 🧼 モップ清掃のやり方説明
-            毎週日曜日の夜、動線が落ち着いた21時以降に実施します。
-            
-            *   **A1区間**：199号線側のバックヤード出入り口より左
-            *   **A2区間**：より右
-            *   **B区間**：レジより右・トイレ側
-            
-            **【手順】**
-            1. バケツ用意（なんちゃら洗剤）
-            2. 力いっぱいこする
-            3. 終わったら記録シートを記入する
+            ### 🧼 モップ清掃の手順
+            毎週日曜日の21時以降に実施します。
+            1. 掲示されているマップの番号に沿って清掃。
+            2. 終わったら備え付けの紙マップを塗りつぶす。
+            3. 店長がこのシステムに最終記録を行います。
             """)
     else:
-        # --- 管理者モード：ここから表示 ---
+        # --- 管理者モード ---
         # 1. 年月の選択
         col_y, col_m = st.columns(2)
         c_today = date.today()
-        # 選択肢を自動生成
         year_list_clean = [c_today.year - 1, c_today.year, c_today.year + 1]
         c_year = col_y.selectbox("記録年", year_list_clean, index=1)
         c_month = col_m.selectbox("記録月", range(1, 13), index=c_today.month - 1)
         
-        log_sheet_name = f"cleaning_log_{c_year}_{c_month:02}"
-        log_state_key = f"clean_data_{c_year}_{c_month}"
+        log_sheet_name = f"cleaning_log_v2_{c_year}_{c_month:02}"
+        log_state_key = f"clean_data_v2_{c_year}_{c_month}"
+
+        # マップ画像を大きく表示
+        try:
+            st.image("cleaning_map.png", caption="清掃区画マップ（①〜⑦）", width=700)
+        except:
+            st.error("画像ファイル 'cleaning_map.png' が見つかりません。")
 
         # 2. データの読み込み
         if log_state_key not in st.session_state:
-            with st.spinner("最新データを読み込み中..."):
+            with st.spinner("データを読み込み中..."):
+                # 既存シートの確認
                 raw_gc = None
                 if hasattr(conn, "_client"): raw_gc = conn._client
                 elif hasattr(conn, "client") and hasattr(conn.client, "_client"): raw_gc = conn.client._client
@@ -1200,93 +1206,134 @@ if mode == "清掃記録":
                 sundays = get_sundays(c_year, c_month)
                 day_labels = [s.strftime("%m/%d") for s in sundays]
 
+                # 区画の定義 ①〜⑦
+                areas = [f"{i}区画" for i in range(1, 8)]
+
                 if r_raw is None or r_raw.empty:
-                    df = pd.DataFrame({
-                        "日付": day_labels,
-                        "A1区間": [False] * len(sundays),
-                        "A2区間": [False] * len(sundays),
-                        "B区間": [False] * len(sundays),
-                        "担当者/一言メモ": [""] * len(sundays)
-                    }).set_index("日付")
+                    data = {"日付": day_labels}
+                    for a in areas: data[a] = [False] * len(sundays)
+                    data["担当者/一言メモ"] = [""] * len(sundays)
+                    df = pd.DataFrame(data).set_index("日付")
                 else:
                     df = r_raw.set_index(r_raw.columns[0])
                     df = df.reindex(index=day_labels)
-                    # チェックボックス列の整形
-                    for c in ["A1区間", "A2区間", "B区間"]:
-                        if c in df.columns:
-                            df[c] = df[c].map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0", "TRUE.0"])
+                    for a in areas:
+                        if a in df.columns:
+                            df[a] = df[a].map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0"])
                         else:
-                            df[c] = False
-                    # メモ欄の整形
-                    if "担当者/一言メモ" not in df.columns:
-                        df["担当者/一言メモ"] = ""
-                    else:
-                        df["担当者/一言メモ"] = df["担当者/一言メモ"].fillna("").astype(str)
+                            df[a] = False
+                    if "担当者/一言メモ" not in df.columns: df["担当者/一言メモ"] = ""
 
                 st.session_state[log_state_key] = df
 
         display_log_df = st.session_state[log_state_key]
 
-        # 3. 入力フォーム
-        with st.form(key=f"cleaning_form_{log_sheet_name}"):
+        # 3. 入力フォーム（エディタ）
+        st.subheader("📝 清掃実施チェック")
+        with st.form(key=f"clean_form_v2_{log_sheet_name}"):
+            # ①〜⑦の列設定を一気に作る
+            column_config = {f"{i}区画": st.column_config.CheckboxColumn(f"{i}", width="small") for i in range(1, 8)}
+            column_config["担当者/一言メモ"] = st.column_config.TextColumn("一言メモ", width="medium")
+
             edited_log = st.data_editor(
                 display_log_df,
-                column_config={
-                    "A1区間": st.column_config.CheckboxColumn("A1"),
-                    "A2区間": st.column_config.CheckboxColumn("A2"),
-                    "B区間": st.column_config.CheckboxColumn("B"),
-                    "担当者/一言メモ": st.column_config.TextColumn("一言メモ", width="large", required=False)
-                },
+                column_config=column_config,
                 use_container_width=True,
-                key=f"editor_widget_{log_sheet_name}"
+                key=f"editor_v2_{log_sheet_name}"
             )
 
-            submit_save = st.form_submit_button(label="💾 清掃記録を保存する", use_container_width=True)
+            if st.form_submit_button("💾 記録を保存する", use_container_width=True):
+                if save_sheet_robust(edited_log, log_sheet_name):
+                    st.session_state[log_state_key] = edited_log
+                    st.success("✅ スプレッドシートに保存しました！")
+                    time.sleep(1)
+                    st.rerun()
 
-            if submit_save:
-                with st.spinner("保存中..."):
-                    if save_sheet_robust(edited_log, log_sheet_name):
-                        st.session_state[log_state_key] = edited_log
-                        st.success("✅ 保存しました！")
-                        time.sleep(1)
-                        st.rerun()
-
-# --- 4. Excel出力機能（文字変換版） ---
+        # 4. Excel出力（画像埋め込み機能付き）
         st.markdown("---")
-        st.subheader("📊 清掃記録をExcelで書き出す")
+        st.subheader("📊 印刷用Excel出力")
         
-        # エクセル出力用にデータを加工する（元の画面のデータは変えずに、コピーを作る）
-        export_df = edited_log.copy()
-        for col in ["A1区間", "A2区間", "B区間"]:
-            if col in export_df.columns:
-                # Trueなら「〇」、Falseなら「ー」に変換
+        if st.button(f"📥 {c_month}月の清掃報告書を作成"):
+            # データ加工（「済」の文字を太く強調するため、データのみ先に抽出）
+            export_df = edited_log.copy()
+            for i in range(1, 8):
+                col = f"{i}区画"
                 export_df[col] = export_df[col].map({True: "済", False: "ー"})
 
-# Excel出力ボタンの中の処理
-        buffer_clean = io.BytesIO()
-        with pd.ExcelWriter(buffer_clean, engine='xlsxwriter') as writer:
-            export_df.to_excel(writer, sheet_name='清掃記録', startrow=2) # 2行目からデータを開始
-    
-            workbook  = writer.book
-            worksheet = writer.sheets['清掃記録']
-    
-    # --- ここがポイント：画像をExcelに挿入 ---
-    # insert_image(行, 列, 画像パス, オプション)
-    # 'cleaning_map.png' というファイル名で保存されている前提
-            try:
-                worksheet.insert_image('G2', 'cleaning_map.png', {'x_scale': 0.5, 'y_scale': 0.5})
-            except:
-                pass # 画像がない場合はスキップ
+            buffer_clean = io.BytesIO()
+            with pd.ExcelWriter(buffer_clean, engine='xlsxwriter') as writer:
+                # 1. 表を中段に配置 (少し下げて開始)
+                export_df.to_excel(writer, sheet_name='清掃報告書', startrow=4, startcol=0)
+                
+                workbook  = writer.book
+                worksheet = writer.sheets['清掃報告書']
+                
+                # --- A4横・印刷設定 ---
+                worksheet.set_landscape() # 横向き
+                worksheet.set_paper(9)    # A4サイズ
+                worksheet.set_margins(0.5, 0.5, 0.5, 0.5) # 余白を狭く
+                
+                # --- 書式設定 ---
+                # タイトル用
+                fmt_title = workbook.add_format({'bold': True, 'size': 18, 'align': 'center', 'valign': 'vcenter'})
+                # 表のヘッダー用
+                fmt_header = workbook.add_format({'bold': True, 'bg_color': '#E0E0E0', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'size': 12})
+                # 表のデータ用
+                fmt_data = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'size': 12})
+                # 「済」だけ赤文字で目立たせる
+                fmt_done = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'size': 12, 'font_color': '#FF0000', 'bold': True})
+                # 判子欄用
+                fmt_stamp = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'top', 'size': 10, 'color': '#666666'})
 
-    # 書式設定（表をコンパクトにする）
-            fmt_border = workbook.add_format({'border': 1})
-            worksheet.set_column('A:F', 10, fmt_border)
-        st.download_button(
-            label=f"📥 {c_month}月の清掃記録をExcel保存",
-            data=buffer_clean.getvalue(),
-            file_name=f"Cleaning_Log_{c_year}_{c_month:02}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+                # --- 1. レイアウト：タイトル ---
+                worksheet.merge_range('A1:I2', f"ジョイフル小倉店 {c_year}年{c_month}月 モップ清掃報告書", fmt_title)
+
+                # --- 2. レイアウト：列幅と行の高さ ---
+                worksheet.set_column('A:A', 14) # 日付
+                worksheet.set_column('B:H', 6)  # ①〜⑦
+                worksheet.set_column('I:I', 35) # メモ欄を長く
+                for r in range(4, 10): # データ行を高くして見やすく
+                    worksheet.set_row(r, 30)
+
+                # --- 3. データの再書き込み（書式適用） ---
+                # pandasが出力したデータを一旦消して、書式付きで上書き
+                headers = ["日付", "①", "②", "③", "④", "⑤", "⑥", "⑦", "一言メモ"]
+                for c_idx, val in enumerate(headers):
+                    worksheet.write(4, c_idx, val, fmt_header)
+
+                for r_idx, (date_label, row) in enumerate(export_df.iterrows()):
+                    worksheet.write(5 + r_idx, 0, date_label, fmt_data)
+                    for c_idx in range(1, 8):
+                        val = row[f"{c_idx}区画"]
+                        fmt = fmt_done if val == "済" else fmt_data
+                        worksheet.write(5 + r_idx, c_idx, val, fmt)
+                    worksheet.write(5 + r_idx, 8, row["担当者/一言メモ"], fmt_data)
+
+                # --- 4. 判子欄（マネージャー確認印） ---
+                # 表の右下に配置
+                worksheet.write('I11', '店長確認印', fmt_stamp)
+                worksheet.merge_range('I12:I14', '', fmt_stamp) # 判子を押す空欄
+
+                # --- 5. 魔法の処理：画像を左下にドーンと配置 ---
+                try:
+                    # 表の下（11行目以降）にマップを大きく配置
+                    # A1横幅に合わせてスケールを調整
+                    worksheet.insert_image('A11', 'cleaning_map.png', {
+                        'x_scale': 0.65, 
+                        'y_scale': 0.65,
+                        'x_offset': 5,
+                        'y_offset': 15
+                    })
+                    st.toast("Excelに画像を最適化して配置しました！")
+                except:
+                    st.error("画像ファイル 'cleaning_map.png' が見つかりませんでした。")
+
+            st.download_button(
+                label="📥 印刷用Excelをダウンロード",
+                data=buffer_clean.getvalue(),
+                file_name=f"Cleaning_Report_{c_year}_{c_month:02}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 if mode == "レジ締め作業":
     st.title("💰 レジ締め作業")
 
