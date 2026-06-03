@@ -696,52 +696,100 @@ elif mode == "シフト自動生成（案）・シフトアップロード":
             k_n_we = st.number_input("キッチン夜 ", 1, 10, 4, key="k_n_we")
 
 
-# --- 1.5 詳細な枠時間の設定エリア ---
+# --- 1.5 詳細な枠時間の設定エリア（フォーム化） ---
     with st.expander("🕒 詳細な枠時間の設定（30分刻み）"):
-        st.write("各ポジションの人数分、勤務時間を設定してください。")
-        
-        def render_time_sliders(label, count, key_prefix):
-            times = []
-            cols = st.columns(2) # 2列で見やすく表示
-            for i in range(count):
-                # 基本のラベル作成
-                display_label = f"{label} {i+1}人目"
-                
-                # ホールの1人目だけ特別な表記を追加
-                if "ホール" in label and i == 0:
-                    if "昼" in label:
-                        display_label += " (デザート)"
-                    elif "夜" in label:
-                        display_label += " (レジ締め)"
-                
-                with cols[i % 2]:
-                    t = st.select_slider(
-                        display_label,
-                        options=TIME_OPTIONS,
-                        value=("10:00", "18:00") if "昼" in label else ("18:00", "23:00"),
-                        key=f"{key_prefix}_{i}"
-                    )
-                    times.append(f"{t[0]}-{t[1]}")
-            return times
+        st.write("各ポジションの勤務時間を設定してください。「デフォルトとして保存」を押すと次回の初期値になります。")
 
-        tab_wd, tab_we = st.tabs(["🚃 平日の時間設定", "🌞 金土日の時間設定"])
-        
-        with tab_wd:
-            wd_hd_slots = render_time_sliders("ホール昼", h_d_wd, "wd_hd")
-            wd_kd_slots = render_time_sliders("キッチン昼", k_d_wd, "wd_kd")
-            wd_hn_slots = render_time_sliders("ホール夜", h_n_wd, "wd_hn")
-            wd_kn_slots = render_time_sliders("キッチン夜", k_n_wd, "wd_kn")
+        # --- A. 保存されている時間を読み込む処理 ---
+        def load_stored_times():
+            default_df = pd.DataFrame(columns=["key", "start", "end"])
+            try:
+                # config_timesシートを読み込み
+                stored_df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="config_times", ttl=0)
+                if stored_df is not None and not stored_df.empty:
+                    return stored_df.set_index("key").to_dict('index')
+                return {}
+            except:
+                return {}
 
-        with tab_we:
-            we_hd_slots = render_time_sliders("ホール昼", h_d_we, "we_hd")
-            we_kd_slots = render_time_sliders("キッチン昼", k_d_we, "we_kd")
-            we_hn_slots = render_time_sliders("ホール夜", h_n_we, "we_hn")
-            we_kn_slots = render_time_sliders("キッチン夜", k_n_we, "we_kn")
+        stored_times = load_stored_times()
+
+        # --- B. フォームの開始（バーを動かしてもリロードされないようにする） ---
+        with st.form(key="time_config_form"):
+            
+            def render_time_sliders_in_form(label, count, key_prefix):
+                times = []
+                cols = st.columns(2)
+                for i in range(count):
+                    # 以前保存した値があるか確認、なければデフォルト
+                    db_key = f"{key_prefix}_{i}"
+                    if db_key in stored_times:
+                        init_val = (stored_times[db_key]["start"], stored_times[db_key]["end"])
+                    else:
+                        init_val = ("10:00", "18:00") if "昼" in label else ("18:00", "23:00")
+                    
+                    display_label = f"{label} {i+1}人目"
+                    if "ホール" in label and i == 0:
+                        display_label += " (デザート)" if "昼" in label else " (レジ締め)"
+                    
+                    with cols[i % 2]:
+                        t = st.select_slider(
+                            display_label,
+                            options=TIME_OPTIONS,
+                            value=init_val,
+                            key=f"slider_ui_{db_key}"
+                        )
+                        times.append({"key": db_key, "start": t[0], "end": t[1], "range": f"{t[0]}-{t[1]}"})
+                return times
+
+            tab_wd, tab_we = st.tabs(["🚃 平日の時間設定", "🌞 金土日の時間設定"])
+            
+            all_settings_list = []
+            with tab_wd:
+                wd_hd_data = render_time_sliders_in_form("ホール昼", h_d_wd, "wd_hd")
+                wd_kd_data = render_time_sliders_in_form("キッチン昼", k_d_wd, "wd_kd")
+                wd_hn_data = render_time_sliders_in_form("ホール夜", h_n_wd, "wd_hn")
+                wd_kn_data = render_time_sliders_in_form("キッチン夜", k_n_wd, "wd_kn")
+                all_settings_list.extend(wd_hd_data + wd_kd_data + wd_hn_data + wd_kn_data)
+
+            with tab_we:
+                we_hd_data = render_time_sliders_in_form("ホール昼", h_d_we, "we_hd")
+                we_kd_data = render_time_sliders_in_form("キッチン昼", k_d_we, "we_kd")
+                we_hn_data = render_time_sliders_in_form("ホール夜", h_n_we, "we_hn")
+                we_kn_data = render_time_sliders_in_form("キッチン夜", k_n_we, "we_kn")
+                all_settings_list.extend(we_hd_data + we_kd_data + we_hn_data + we_kn_data)
+
+            # フォーム送信ボタン（これらを押すまで再計算されない）
+            col_save1, col_save2 = st.columns([1, 1])
+            with col_save1:
+                update_btn = st.form_submit_button("✅ この時間を今回の生成に適用", use_container_width=True)
+            with col_save2:
+                save_db_btn = st.form_submit_button("💾 現在の時間をデフォルトとして保存", use_container_width=True)
+
+            if save_db_btn:
+                # スプレッドシートに保存
+                save_df = pd.DataFrame(all_settings_list)[["key", "start", "end"]]
+                if save_sheet_robust(save_df.set_index("key"), "config_times"):
+                    st.success("デフォルト設定を更新しました！")
+                else:
+                    st.error("保存に失敗しました。")
+
+            # 生成ロジックに渡すためにリストを整形
+            wd_hd_slots = [item["range"] for item in wd_hd_data]
+            wd_kd_slots = [item["range"] for item in wd_kd_data]
+            wd_hn_slots = [item["range"] for item in wd_hn_data]
+            wd_kn_slots = [item["range"] for item in wd_kn_data]
+            we_hd_slots = [item["range"] for item in we_hd_data]
+            we_kd_slots = [item["range"] for item in we_kd_data]
+            we_hn_slots = [item["range"] for item in we_hn_data]
+            we_kn_slots = [item["range"] for item in we_kn_data]
+
     # セッション状態（貯金箱）の初期化
     if "last_generated_df" not in st.session_state:
         st.session_state.last_generated_df = None
     if "last_shortage_alerts" not in st.session_state:
         st.session_state.last_shortage_alerts = []
+    
     st.markdown("---")
     st.write("設定が完了したら、下のボタンを押してシフトを生成してください。")
     # 生成実行ボタン
@@ -1002,16 +1050,28 @@ elif mode == "シフト自動生成（案）・シフトアップロード":
     if pw == "1234":
         st.divider()
         st.subheader("📤 完成版Excelをアップロードして公開")
+        st.write("店長がExcelで微調整したファイルをアップロードして、確定シフトとして公開します。")
+
+        # --- 1. アップロード先の年月を選択 ---
+        col_up1, col_up2 = st.columns(2)
+        with col_up1:
+            # 現在の年を中心に、前年・今年・来年を選択肢にする
+            up_target_year = st.selectbox("アップロード先の年", [year - 1, year, year + 1], index=1, key="up_y")
+        with col_up2:
+            # 1〜12月を選択肢にし、デフォルトを現在の処理月に合わせる
+            up_target_month = st.selectbox("アップロード先の月", range(1, 13), index=month - 1, key="up_m")
+
         up_file = st.file_uploader("Excelファイルを選択してください", type="xlsx")
         
         if up_file:
             # 1. Excelを読み込む
             f_df = pd.read_excel(up_file, sheet_name=0)
-            st.write("読み込み中... プレビュー:")
+            st.write(f"📂 {up_target_year}年{up_target_month}月分として読み込み中... プレビュー:")
             st.dataframe(f_df.head(3))
             
-            if st.button("公開する"):
-                with st.spinner("計算中..."):
+            if st.button(f"{up_target_year}年{up_target_month}月の確定シフトを公開する"):
+                with st.spinner("労働時間を計算してスプレッドシートを更新中..."):
+                    # 日付列（カッコが含まれる列）を特定
                     date_cols = [c for c in f_df.columns if "(" in str(c) and ")" in str(c)]
                     
                     nets, brks = [], []
@@ -1021,27 +1081,33 @@ elif mode == "シフト自動生成（案）・シフトアップロード":
                             n, b = calc_work_and_break(row[c])
                             row_net += n
                             row_brk += b
-                        # ★ ここで 1（小数点第1位）に丸める
+                        # 小数点第1位に丸める
                         nets.append(round(row_net, 1))
                         brks.append(round(row_brk, 1))
                     
                     f_df["合計実働"] = nets
                     f_df["休憩合計"] = brks                    
-                    # インデックス（名前）を設定
+                    # 1列目（通常は名前）をインデックスに設定
                     f_df = f_df.set_index(f_df.columns[0])
                     
-                    # スプレッドシートへ保存
-                    target_sheet = f"shift_{year}_{month:02}"
-# --- シフトアップロードの保存成功後の処理 ---
+                    # 2. スプレッドシートへ保存（選択した年月を使用）
+                    target_sheet = f"shift_{up_target_year}_{up_target_month:02}"
+                    
                     if save_sheet_robust(f_df, target_sheet):
                         st.cache_data.clear()
                         
-                        # --- ここでLINE通知を実行 ---
-                        line_msg = f"📢 ジョイフル小倉店 シフト公開のお知らせ\n\n{year}年{month}月のシフト予定が公開されました！\n確認してください！✨\nhttps://joyful-shift-jf9lwlpz2kpjovgwspgkcq.streamlit.app/"
+                        # --- 3. LINE通知を実行（選択した年月を使用） ---
+                        line_msg = (
+                            f"📢 ジョイフル小倉店 シフト公開のお知らせ\n\n"
+                            f"{up_target_year}年{up_target_month}月の確定シフトが公開（更新）されました！\n"
+                            f"各自で確認をお願いします！✨\n"
+                            f"https://joyful-shift-jf9lwlpz2kpjovgwspgkcq.streamlit.app/"
+                        )
+                        
                         if send_line_notification(line_msg):
-                            st.success("✅ スプレッドシートを更新し、LINEグループに通知しました！")
+                            st.success(f"✅ {target_sheet} を更新し、LINEで通知しました！")
                         else:
-                            st.warning("⚠️ スプレッドシートは更新されましたが、LINE通知に失敗しました。")
+                            st.warning(f"⚠️ {target_sheet} は更新されましたが、LINE通知に失敗しました。")
                         
                         time.sleep(1)
                         st.rerun()
