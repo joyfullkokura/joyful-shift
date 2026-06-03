@@ -889,7 +889,7 @@ elif mode == "シフト自動生成（案）・シフトアップロード":
         # 結果を保存
         st.session_state.last_generated_df = best_overall_df
         st.session_state.last_shortage_alerts = best_overall_alerts
-        status_text.text("連勤数とか希望より少ない人ができるだけいないようにしたやつできました！")
+        status_text.text("5枚のシフト表から一番いいやつを選んでます…")
         time.sleep(1)
         status_text.empty()
         progress_bar.empty()
