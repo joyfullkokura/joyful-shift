@@ -745,143 +745,154 @@ elif mode == "シフト自動生成（案）・シフトアップロード":
     st.markdown("---")
     st.write("設定が完了したら、下のボタンを押してシフトを生成してください。")
     # 生成実行ボタン
-    gen_button = st.button("シフトを生成・再生成（約23秒）", use_container_width=True)
-    # --- 2. 生成ロジック（ボタンが押されたときだけ実行） ---
+    gen_button = st.button("シフトを生成・再生成（約9秒）", use_container_width=True)
+# --- 2. 生成ロジック（新：動的プライオリティ・スコアリング方式） ---
     if gen_button:
         progress_bar = st.progress(0)
-        status_text = st.empty() # テキスト表示用
-    
-    # 全ステップ数 (4ブロック * 70回)
-        total_steps = 4 * 70
-        current_step = 0
-        with st.spinner("計算中...なんとかなれッ。"):
-            # データの準備（休み希望の読み込み）
-            req_load_raw = load_sheet_cached(REQ_SHEET)
-            if req_load_raw is None or req_load_raw.empty:
-                req_load = pd.DataFrame(False, index=ALL_NAMES, columns=column_names)
-            else:
-                req_load_raw = req_load_raw.drop_duplicates(subset=req_load_raw.columns[0])
-                req_load = req_load_raw.set_index(req_load_raw.columns[0]).reindex(ALL_NAMES).fillna(False)
-                req_load = req_load.map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0"])
+        status_text = st.empty()
+        
+        # 試行回数を5回に設定（計算が効率的なのでこれで十分高品質になります）
+        NUM_TRIALS = 5
+        best_overall_df = None
+        best_overall_alerts = []
+        min_total_shortage = 9999
+        
+        # データの準備（休み希望の読み込み）
+        req_load_raw = load_sheet_cached(REQ_SHEET)
+        if req_load_raw is None or req_load_raw.empty:
+            req_load = pd.DataFrame(False, index=ALL_NAMES, columns=column_names)
+        else:
+            req_load_raw = req_load_raw.drop_duplicates(subset=req_load_raw.columns[0])
+            req_load = req_load_raw.set_index(req_load_raw.columns[0]).reindex(ALL_NAMES).fillna(False)
+            req_load = req_load.map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0"])
 
-            # 共通の「割り当て関数」の定義
-            def assign_slots(slot_list, main_pool, wildcard_pool, assigned_list):
-                result = []
-                combined_pool = main_pool + wildcard_pool
-                for slot_time in slot_list:
-                    available = [name for name in combined_pool if name not in assigned_list]
-                    if available:
-                        picked = available[0]
-                        result.append({"スロット": slot_time, "担当者": picked})
-                        assigned_list.append(picked)
-                    else:
-                        result.append({"スロット": slot_time, "担当者": "⚠️ 欠員"})
-                return result
+        # 全スタッフの「休み希望総数」を計算（レア度ボーナス用）
+        off_req_counts = req_load.sum(axis=1).to_dict()
+        
+        # 月間の目標出勤日数を計算（週希望の70% × 月の週数）
+        # 月の日数から週数を算出（例: 31日なら約4.4週）
+        num_weeks = num_days / 7.0
+        staff_goals = {row["名前"]: max(1, int(row["週希望"] * num_weeks * 0.7)) for _, row in master_df.iterrows()}
+        staff_limits = {row["名前"]: row["週希望"] for _, row in master_df.iterrows()}
 
-            # 生成用の一時変数
-            t_monthly_shift_df = pd.DataFrame("", index=ALL_NAMES, columns=column_names)
-            user_limits = {row["名前"]: row["週希望"] for _, row in master_df.iterrows()}
-            t_shortage_alerts = []
-
-            # 31日を4つのブロックに分割
-            ranges = [[1, 7], [8, 15], [16, 23], [24, 31]]
+        for trial_idx in range(NUM_TRIALS):
+            status_text.text(f"シフト表 {trial_idx + 1}/{NUM_TRIALS} 枚目を計算中...なんとかなれっ！！")
+            
+            # 試行用の一時変数
+            trial_df = pd.DataFrame("", index=ALL_NAMES, columns=column_names)
+            trial_shortage_count = 0
+            trial_alerts = []
+            
+            # 累積データ（1ヶ月通してカウント）
+            cumulative_counts = {name: 0 for name in ALL_NAMES}
+            consecutive_days = {name: 0 for name in ALL_NAMES}
             
             # 全スタッフに休み印をあらかじめ印字
             for name in ALL_NAMES:
                 for col in column_names:
                     if req_load.at[name, col] == True:
-                        t_monthly_shift_df.at[name, col] = "✖"
+                        trial_df.at[name, col] = "✖"
 
-            # ブロックごとのループ
-            for start_d, end_d in ranges:
-                best_block_df = None
-                best_block_alerts = []
-                min_shortage_in_block = 999
+            # --- 1日から末日まで1日ずつ累積で計算 ---
+            for day_idx, col in enumerate(column_names):
+                assigned_today = []
+                d = day_idx + 1
+                d_idx = calendar.weekday(year, month, d)
                 
-                # 指定回数試行して最も欠員の少ないパターンを探す
-                for trial in range(100):
-                    trial_df = t_monthly_shift_df.copy()
-                    t_week_counts = {name: 0 for name in ALL_NAMES}
-                    trial_alerts = []
-                    trial_shortage = 0
+                # 曜日による設定スロットの決定
+                if d_idx >= 4: # 金土日
+                    s_hd, s_kd, s_hn, s_kn = we_hd_slots, we_kd_slots, we_hn_slots, we_kn_slots
+                else: # 月〜木
+                    s_hd, s_kd, s_hn, s_kn = wd_hd_slots, wd_kd_slots, wd_hn_slots, wd_kn_slots
+
+                # --- 今日の全員の優先度スコアを計算 ---
+                scores = {}
+                for name in ALL_NAMES:
+                    # 1. 不足率ボーナス (1 - 現在数/目標数) * 100
+                    goal = staff_goals.get(name, 10)
+                    progress_ratio = cumulative_counts[name] / goal
+                    unmet_score = (1.0 - progress_ratio) * 100
                     
-                    block_cols = [c for c in column_names if start_d <= int(c.split('(')[0]) <= end_d]
+                    # 2. レア度ボーナス (休み希望数 * 3)
+                    rarity_score = off_req_counts.get(name, 0) * 3
                     
-                    for col in block_cols:
-                        assigned_today = []
-                        d = int(col.split('(')[0])
-                        d_idx = calendar.weekday(year, month, d)
+                    # 3. 連勤ペナルティ (累進課税)
+                    consecutive = consecutive_days[name]
+                    penalty = 0
+                    if consecutive == 1: penalty = 10
+                    elif consecutive == 2: penalty = 30
+                    elif consecutive == 3: penalty = 60
+                    elif consecutive >= 4: penalty = 150 # 5連勤以上は極めて低く
+                    
+                    # 4. 少しのランダム性 (0-10点)
+                    luck = random.uniform(0, 10)
+                    
+                    scores[name] = unmet_score + rarity_score - penalty + luck
+
+                # 候補者プールの作成
+                def get_priority_pool(group_name, filter_skill=None):
+                    pool = []
+                    for _, row in master_df.iterrows():
+                        name = row["名前"]
+                        # 条件: 休み希望でない、本日未割り当て
+                        if req_load.at[name, col] or name in assigned_today:
+                            continue
+                        # グループ条件
+                        if row["グループ"] == group_name or row["グループ"] == "W":
+                            # スキル条件
+                            if filter_skill and not row[filter_skill]:
+                                continue
+                            pool.append({"名前": name, "スコア": scores[name]})
+                    
+                    # スコアの高い順にソート
+                    pool.sort(key=lambda x: x["スコア"], reverse=True)
+                    return [p["名前"] for p in pool]
+
+                # --- 割り当て実行 ---
+                all_positions = [
+                    ("HD", "ホール昼", s_hd, "デザート"),
+                    ("KD", "キッチン昼", s_kd, None),
+                    ("HN", "ホール夜", s_hn, "レジ締め"),
+                    ("KN", "キッチン夜", s_kn, None)
+                ]
+
+                for grp_code, pos_name, slots, skill in all_positions:
+                    for i, slot_time in enumerate(slots):
+                        # リーダー枠（1人目かつスキル指定あり）かどうかの判定
+                        current_skill = skill if i == 0 else None
+                        pool = get_priority_pool(grp_code, current_skill)
                         
-# --- 曜日による設定スロットの決定 ---
-                        if d_idx >= 4: # 金土日
-                            s_hd, s_kd, s_hn, s_kn = we_hd_slots, we_kd_slots, we_hn_slots, we_kn_slots
-                        else: # 月〜木
-                            s_hd, s_kd, s_hn, s_kn = wd_hd_slots, wd_kd_slots, wd_hn_slots, wd_kn_slots
-                
-                        n_hd, n_kd, n_hn, n_kn = len(s_hd), len(s_kd), len(s_hn), len(s_kn)
+                        if pool:
+                            picked = pool[0]
+                            trial_df.at[picked, col] = slot_time
+                            assigned_today.append(picked)
+                            cumulative_counts[picked] += 1
+                            consecutive_days[picked] += 1
+                        else:
+                            # 欠員
+                            trial_shortage_count += 1
+                            trial_alerts.append(f"{d}日:{pos_name}に欠員")
 
-                # 候補者のリストアップ（ロジックはそのまま）
-                        def get_eligible_staff(group_name, is_wildcard=False):
-                            pool = [n for n in master_df[master_df['グループ'] == group_name]['名前'].tolist() 
-                                    if not req_load.at[n, col] and (is_wildcard or t_week_counts[n] < int(user_limits.get(n, 3)))]
-                            random.shuffle(pool)
-                            return pool
+                # 出勤しなかった人の連勤カウントをリセット
+                for name in ALL_NAMES:
+                    if name not in assigned_today:
+                        consecutive_days[name] = 0
+            
+            # パターンの評価（欠員が最小のものを保存）
+            if trial_shortage_count < min_total_shortage:
+                min_total_shortage = trial_shortage_count
+                best_overall_df = trial_df
+                best_overall_alerts = trial_alerts
+            
+            progress_bar.progress((trial_idx + 1) / NUM_TRIALS)
 
-                        hd_pool = get_eligible_staff('HD')
-                        hn_pool = get_eligible_staff('HN')
-                        kd_pool = get_eligible_staff('KD')
-                        kn_pool = get_eligible_staff('KN')
-                        w_pool = get_eligible_staff('W', is_wildcard=True)
-
-                # --- 1. ホール昼(HD)の割り当て ---
-                        hd_res = []
-                        hd_leader = next((n for n in (hd_pool + w_pool) if n not in assigned_today and master_df.set_index('名前').at[n, 'デザート']), None)
-                        if hd_leader:
-                            hd_res.append({"スロット": s_hd[0], "担当者": hd_leader}) # 設定された1人目の時間を使う
-                            assigned_today.append(hd_leader)
-                # 残りの人数分、設定された時間(s_hd)を割り当てる
-                        hd_res += assign_slots(s_hd[len(hd_res):n_hd], hd_pool, w_pool, assigned_today)
-
-                # --- 2. キッチン昼(KD)の割り当て ---
-                        kd_res = assign_slots(s_kd, kd_pool, w_pool, assigned_today)
-
-                # --- 3. ホール夜(HN)の割り当て ---
-                        hn_res = []
-                        hn_leader = next((n for n in (hn_pool + w_pool) if n not in assigned_today and master_df.set_index('名前').at[n, 'レジ締め']), None)
-                        if hn_leader:
-                            hn_res.append({"スロット": s_hn[0], "担当者": hn_leader}) # 設定された1人目の時間を使う
-                            assigned_today.append(hn_leader)
-                        hn_res += assign_slots(s_hn[len(hn_res):n_hn], hn_pool, w_pool, assigned_today)
-
-                # --- 4. キッチン夜(KN)の割り当て ---
-                        kn_res = assign_slots(s_kn, kn_pool, w_pool, assigned_today)
-
-                        for res_list, pos_name in [(hd_res, "ホール昼"), (kd_res, "キッチン昼"), (hn_res, "ホール夜"), (kn_res, "キッチン夜")]:
-                            for item in res_list:
-                                if item["担当者"] == "⚠️ 欠員":
-                                    trial_shortage += 1
-                                    trial_alerts.append(f"{d}日:{pos_name}に欠員")
-                                else:
-                                    trial_df.at[item["担当者"], col] = item["スロット"]
-                                    t_week_counts[item["担当者"]] += 1
-
-                    if trial_shortage < min_shortage_in_block:
-                        min_shortage_in_block = trial_shortage
-                        best_block_df = trial_df
-                        best_block_alerts = trial_alerts
-                
-                t_monthly_shift_df = best_block_df
-                t_shortage_alerts.extend(best_block_alerts)
-
-            # 結果を貯金箱に保存
-            st.session_state.last_generated_df = t_monthly_shift_df
-            st.session_state.last_shortage_alerts = t_shortage_alerts
-            progress_bar.progress(1.0)
-            status_text.text("🎉 生成が完了しました！")
-            time.sleep(1)
-            status_text.empty() # メッセージを消す
-            progress_bar.empty() # バーを消す
-
+        # 結果を保存
+        st.session_state.last_generated_df = best_overall_df
+        st.session_state.last_shortage_alerts = best_overall_alerts
+        status_text.text("連勤数とか希望より少ない人ができるだけいないようにしたやつできました！")
+        time.sleep(1)
+        status_text.empty()
+        progress_bar.empty()
     # --- 3. 結果の表示（貯金箱にデータがある場合のみ表示） ---
     if st.session_state.last_generated_df is not None:
         # スタイル適用して表示
