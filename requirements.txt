@@ -3,3 +3,4 @@ pandas
 xlsxwriter
 st-gsheets-connection
 openpyxl
+jpholiday
