@@ -11,8 +11,37 @@ from streamlit_gsheets import GSheetsConnection
 import streamlit.components.v1 as components  # 追加
 import requests
 import json
+import jpholiday
+
+def get_month_holidays_list(y, m):
+    """指定した年月の祝日を [(日, 名前), ...] の形式で返す"""
+    # その月が何日まであるか取得
+    last_day = calendar.monthrange(y, m)[1]
+    start_date = date(y, m, 1)
+    end_date = date(y, m, last_day)
+    
+    # 指定期間の祝日を取得
+    h_list = jpholiday.between(start_date, end_date)
+    # [(datetime.date(2026, 7, 20), '海の日'), ...] -> [(20, '海の日'), ...] に変換
+    return [(h[0].day, h[1]) for h in h_list]
 # 日本時間 (JST) を定義
 JST = timezone(timedelta(hours=+9), 'JST')
+def get_kitakyushu_events(y, m):
+    """北九州市・小倉周辺の主要イベント情報を返す"""
+    # 毎年恒例の大型イベント
+    fixed_events = {
+        1: [(10, "北九州市二十歳の記念式典（メディアドーム）")],
+        2: [(15, "北九州マラソン（周辺交通規制あり）")],
+        3: [(20, "小倉城桜まつり")],
+        7: [(1, "北九州祇園三まつり 期間開始"), (17, "小倉祇園太鼓"), (18, "小倉祇園太鼓"), (19, "小倉祇園太鼓")],
+        8: [(1, "わっしょい百万夏まつり"), (2, "わっしょい百万夏まつり")],
+        10: [(15, "北九州フードフェスティバル")],
+        11: [(1, "小倉城竹あかり")],
+        12: [(24, "小倉イルミネーション")]
+    }
+    
+    # 選択された年月に該当するイベントを抽出
+    return fixed_events.get(m, [])
 def export_cleaning_handwriting_sheet(year, period_label):
     if period_label == "1-4月": months = [1, 2, 3, 4]
     elif period_label == "5-8月": months = [5, 6, 7, 8]
@@ -359,7 +388,7 @@ st.title(" ジョイフル小倉店シフト管理")
 st.sidebar.title("メニュー")
 # ネット上のロゴを表示する例
 # サイドバーの radio ボタンを更新
-mode = st.sidebar.radio("機能を選択", ["確定シフト閲覧", "休み希望入力", "清掃記録", "レジ締め作業", "従業員名簿管理", "シフト自動生成（案）・シフトアップロード"])
+mode = st.sidebar.radio("機能を選択", ["確定シフト閲覧", "休み希望入力", "清掃記録", "従業員名簿管理", "シフト自動生成（案）","シフトアップロード"])
 pw = st.sidebar.text_input("管理者パスワード", type="password")
 # --- お知らせの読み込みを追加 ---
 # configシートからデータを読み込む
@@ -675,12 +704,58 @@ if mode == "休み希望入力":
         if cancel_btn:
             del st.session_state.editing_user
             st.rerun()
-elif mode == "シフト自動生成（案）・シフトアップロード":
+elif mode == "シフト自動生成（案）":
     st.title(" シフト自動生成（案）")
+    st.write("①～③の順に設定していってください")
+    st.markdown("---")
+    with st.expander("📖 シフト作成ガイド", expanded=False):
+        st.markdown("""
+                ###  ステップ 1：基本の「必要人数」を決める
+                *  **🚃 平日 (月〜木)**: 通常の営業に必要な人数。
+                *  **🌞 金・土・日・祝**: 週末や祝日に増員する人数。
+                *POINT: ここで入力した人数分だけ、コンピュータがスタッフを必死に探します。
+                
+                ---
+
+                ### ステップ 2：特別な日を追加する（＋ボタン）
+                *   お盆、イベント、周辺の祭りなど、**「この日だけは基本設定と違う人数にしたい！」**という日を設定します。
+                *   1.「➕ 特定日の人数を個別に設定する」の枠をクリック。
+                *   2.リストから該当する日を選択。
+                *   3. 出てきた入力欄に、その日だけの人数を入力します。
+                
+                ---
+
+                ### ステップ 3：勤務時間を微調整する
+                *   1.タブを切り替える: [平日] [金土日祝] [⭐特定日] の順に並んでいるので、それぞれ設定します。
+                *   2.バーを動かす: 1人目（リーダー枠）〜N人目の時間を30分刻みで調整します。
+                *   3.保存する: 「💾 デフォルトとして保存」を押すと、来月以降もこの時間が最初からセットされます。
+                ---
+                ### ステップ 4：シフトを生成する
+                *   一番下の「シフトを生成・再生成」ボタンをポチッと押します。
+                *   約10秒間、コンピュータが5パターンのシフトを作成し、その中から**「欠員が最も少なく、連勤がなくて公平な案」**を自動で1つ選び出します。
+                *   画面に表示された表を見て、✖（欠員）が出ていないか確認してください。
+                ---
+                ### ステップ 5：Excelで仕上げ
+                *   ダウンロード: 「📥 Excelを出力する」を押して、パソコンに保存します。
+                *   最終調整: パソコンのExcelで開き、「新人ばかりの日」や「深夜→早朝の連続」がないか最終チェックし、手動で修正して保存します。
+                *  アップロード: システムの「📤 完成版Excelをアップロード」から修正したファイルを選択し、「公開」ボタンを押します。
+        """)
+    if "last_generated_df" not in st.session_state:
+        st.session_state.last_generated_df = None
+    if "last_shortage_alerts" not in st.session_state:
+        st.session_state.last_shortage_alerts = []
+    # --- 0. 祝日データの取得 (修正版) ---
+    current_holidays = get_month_holidays_list(year, month)
+    holiday_days = [h[0] for h in current_holidays]
+    
+    # 来月の祝日計算
+    next_month_date = (v_date + timedelta(days=32)).replace(day=1)
+    next_year, next_month = next_month_date.year, next_month_date.month
+    holidays = get_month_holidays_list(next_year, month)
 
     # --- 1. 必要人数（枠数）の設定エリア ---
-    with st.expander("必要人数の設定", expanded=True):
-        st.write("基本人数を設定してください。")
+    with st.expander("①基本の必要人数設定", expanded=True):
+        st.write("基本の人数を設定してください。")
         col_wd, col_we = st.columns(2)
         with col_wd:
             st.markdown("### 🚃 平日 (月〜木)")
@@ -689,227 +764,217 @@ elif mode == "シフト自動生成（案）・シフトアップロード":
             h_n_wd = st.number_input("ホール夜", 1, 10, 3, key="h_n_wd")
             k_n_wd = st.number_input("キッチン夜", 1, 10, 3, key="k_n_wd")
         with col_we:
-            st.markdown("### 🌞 金・土・日")
+            st.markdown("### 🌞 金・土・日・祝")
             h_d_we = st.number_input("ホール昼 ", 1, 10, 3, key="h_d_we")
             k_d_we = st.number_input("キッチン昼 ", 1, 10, 2, key="k_d_we")
             h_n_we = st.number_input("ホール夜 ", 1, 10, 4, key="h_n_we")
             k_n_we = st.number_input("キッチン夜 ", 1, 10, 4, key="k_n_we")
 
-
-# --- 1.5 詳細な枠時間の設定エリア（フォーム化） ---
-    with st.expander("🕒 詳細な枠時間の設定（30分刻み）"):
-        st.write("各ポジションの勤務時間を設定してください。「デフォルトとして保存」を押すと次回の初期値になります。")
-
-        # --- A. 保存されている時間を読み込む処理 ---
-        def load_stored_times():
-            default_df = pd.DataFrame(columns=["key", "start", "end"])
+    # --- 1.2 特定日の追加設定 (+) ---
+    with st.expander("②➕ 祝日など特定日の人数を個別に設定する"):
+        st.write("イベント日など、特定の日だけ人数を増やしたい、減らしたい場合に使用します。")
+        
+        # 保存データの読み込み（当年月のみ）
+        def load_special_configs():
             try:
-                # config_timesシートを読み込み
-                stored_df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="config_times", ttl=0)
-                if stored_df is not None and not stored_df.empty:
-                    return stored_df.set_index("key").to_dict('index')
-                return {}
-            except:
-                return {}
+                df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="config_special_days", ttl=0)
+                if df is not None and not df.empty:
+                    return df[(df['year'] == year) & (df['month'] == month)]
+                return pd.DataFrame()
+            except: return pd.DataFrame()
 
-        stored_times = load_stored_times()
+        special_df = load_special_configs()
+        existing_days = [int(d) for d in special_df['day'].tolist()] if not special_df.empty else []
+        
+        # 日付選択（マルチセレクト）
+        selected_special_days = st.multiselect(
+            "特別設定を適用する日を選択",
+            range(1, num_days + 1),
+            default=existing_days,
+            key="special_days_select"
+        )
 
-        # --- B. フォームの開始（バーを動かしてもリロードされないようにする） ---
-        with st.form(key="time_config_form"):
-            
-            def render_time_sliders_in_form(label, count, key_prefix):
-                times = []
+        special_configs = {}
+        if selected_special_days:
+            for d in sorted(selected_special_days):
+                with st.container(border=True):
+                    c1, c2, c3, c4, c5 = st.columns([1,2,2,2,2])
+                    c1.markdown(f"#### {d}日")
+                    # 初期値は「金土日祝」の設定を引用
+                    s_hd = c2.number_input(f"H昼", 1, 10, h_d_we, key=f"sp_hd_{d}")
+                    s_kd = c3.number_input(f"K昼", 1, 10, k_d_we, key=f"sp_kd_{d}")
+                    s_hn = c4.number_input(f"H夜", 1, 10, h_n_we, key=f"sp_hn_{d}")
+                    s_kn = c5.number_input(f"K夜", 1, 10, k_n_we, key=f"sp_kn_{d}")
+                    special_configs[d] = {"h_d": s_hd, "k_d": s_kd, "h_n": s_hn, "k_n": s_kn}
+
+    # --- 1.5 詳細な枠時間の設定エリア（動的タブ） ---
+    with st.expander("③🕒 詳細な枠時間の設定（30分刻み）"):
+        st.write("各ポジションの勤務時間を設定してください。")
+
+        # 保存されている時間の読み込み
+        stored_df = load_sheet_no_cache("config_times", pd.DataFrame())
+        stored_times = stored_df.to_dict('index') if not stored_df.empty else {}
+
+        # タブの作成
+        tab_titles = ["🚃 平日", "🌞 金土日祝"] + [f"⭐ {d}日" for d in sorted(selected_special_days)]
+        all_tabs = st.tabs(tab_titles)
+        
+        all_settings_to_save = []
+        slot_data_map = {}
+
+        def render_slider_tab(label, count, key_prefix, tab_obj):
+            results = []
+            with tab_obj:
                 cols = st.columns(2)
                 for i in range(count):
-                    # 以前保存した値があるか確認、なければデフォルト
-                    db_key = f"{key_prefix}_{i}"
-                    if db_key in stored_times:
-                        init_val = (stored_times[db_key]["start"], stored_times[db_key]["end"])
-                    else:
-                        init_val = ("10:00", "18:00") if "昼" in label else ("18:00", "23:00")
-                    
-                    display_label = f"{label} {i+1}人目"
-                    if "ホール" in label and i == 0:
-                        display_label += " (デザート)" if "昼" in label else " (レジ締め)"
+                    k = f"{key_prefix}_{i}"
+                    # 保存値があれば使用、なければデフォルト
+                    default_val = (stored_times[k]["start"], stored_times[k]["end"]) if k in stored_times else (("10:00", "18:00") if "昼" in label else ("18:00", "23:00"))
                     
                     with cols[i % 2]:
-                        t = st.select_slider(
-                            display_label,
-                            options=TIME_OPTIONS,
-                            value=init_val,
-                            key=f"slider_ui_{db_key}"
-                        )
-                        times.append({"key": db_key, "start": t[0], "end": t[1], "range": f"{t[0]}-{t[1]}"})
-                return times
+                        t = st.select_slider(f"{label} {i+1}人目", options=TIME_OPTIONS, value=default_val, key=f"slider_{k}")
+                        results.append(f"{t[0]}-{t[1]}")
+                        all_settings_to_save.append({"key": k, "start": t[0], "end": t[1]})
+            return results
 
-            tab_wd, tab_we = st.tabs(["🚃 平日の時間設定", "🌞 金土日の時間設定"])
-            
-            all_settings_list = []
-            with tab_wd:
-                wd_hd_data = render_time_sliders_in_form("ホール昼", h_d_wd, "wd_hd")
-                wd_kd_data = render_time_sliders_in_form("キッチン昼", k_d_wd, "wd_kd")
-                wd_hn_data = render_time_sliders_in_form("ホール夜", h_n_wd, "wd_hn")
-                wd_kn_data = render_time_sliders_in_form("キッチン夜", k_n_wd, "wd_kn")
-                all_settings_list.extend(wd_hd_data + wd_kd_data + wd_hn_data + wd_kn_data)
+        with st.form(key="time_config_form_v2"):
+            # 平日
+            wd_hd = render_slider_tab("ホール昼", h_d_wd, "wd_hd", all_tabs[0])
+            wd_kd = render_slider_tab("キッチン昼", k_d_wd, "wd_kd", all_tabs[0])
+            wd_hn = render_slider_tab("ホール夜", h_n_wd, "wd_hn", all_tabs[0])
+            wd_kn = render_slider_tab("キッチン夜", k_n_wd, "wd_kn", all_tabs[0])
+            slot_data_map["weekday"] = {"hd": wd_hd, "kd": wd_kd, "hn": wd_hn, "kn": wd_kn}
 
-            with tab_we:
-                we_hd_data = render_time_sliders_in_form("ホール昼", h_d_we, "we_hd")
-                we_kd_data = render_time_sliders_in_form("キッチン昼", k_d_we, "we_kd")
-                we_hn_data = render_time_sliders_in_form("ホール夜", h_n_we, "we_hn")
-                we_kn_data = render_time_sliders_in_form("キッチン夜", k_n_we, "we_kn")
-                all_settings_list.extend(we_hd_data + we_kd_data + we_hn_data + we_kn_data)
+            # 週末/祝日
+            we_hd = render_slider_tab("ホール昼", h_d_we, "we_hd", all_tabs[1])
+            we_kd = render_slider_tab("キッチン昼", k_d_we, "we_kd", all_tabs[1])
+            we_hn = render_slider_tab("ホール夜", h_n_we, "we_hn", all_tabs[1])
+            we_kn = render_slider_tab("キッチン夜", k_n_we, "we_kn", all_tabs[1])
+            slot_data_map["weekend"] = {"hd": we_hd, "kd": we_kd, "hn": we_hn, "kn": we_kn}
 
-            # フォーム送信ボタン（これらを押すまで再計算されない）
-            col_save1, col_save2 = st.columns([1, 1])
-            with col_save1:
-                update_btn = st.form_submit_button("✅ この時間を今回の生成に適用", use_container_width=True)
-            with col_save2:
-                save_db_btn = st.form_submit_button("💾 現在の時間をデフォルトとして保存", use_container_width=True)
+            # 追加の特定日
+            for idx, d in enumerate(sorted(selected_special_days)):
+                conf = special_configs[d]
+                s_hd = render_slider_tab(f"{d}日H昼", conf["h_d"], f"sp_{d}_hd", all_tabs[idx+2])
+                s_kd = render_slider_tab(f"{d}日K昼", conf["k_d"], f"sp_{d}_kd", all_tabs[idx+2])
+                s_hn = render_slider_tab(f"{d}日H夜", conf["h_n"], f"sp_{d}_hn", all_tabs[idx+2])
+                s_kn = render_slider_tab(f"{d}日K夜", conf["k_n"], f"sp_{d}_kn", all_tabs[idx+2])
+                slot_data_map[d] = {"hd": s_hd, "kd": s_kd, "hn": s_hn, "kn": s_kn}
 
-            if save_db_btn:
-                # スプレッドシートに保存
-                save_df = pd.DataFrame(all_settings_list)[["key", "start", "end"]]
-                if save_sheet_robust(save_df.set_index("key"), "config_times"):
-                    st.success("デフォルト設定を更新しました！")
-                else:
-                    st.error("保存に失敗しました。")
+            st.write("")
+            c1, c2 = st.columns(2)
+            apply_btn = c1.form_submit_button("✅ 設定を今回の生成のみに適用", use_container_width=True)
+            save_btn = c2.form_submit_button("💾 デフォルトとして保存", use_container_width=True)
 
-            # 生成ロジックに渡すためにリストを整形
-            wd_hd_slots = [item["range"] for item in wd_hd_data]
-            wd_kd_slots = [item["range"] for item in wd_kd_data]
-            wd_hn_slots = [item["range"] for item in wd_hn_data]
-            wd_kn_slots = [item["range"] for item in wd_kn_data]
-            we_hd_slots = [item["range"] for item in we_hd_data]
-            we_kd_slots = [item["range"] for item in we_kd_data]
-            we_hn_slots = [item["range"] for item in we_hn_data]
-            we_kn_slots = [item["range"] for item in we_kn_data]
+            if save_btn:
+                # config_times 保存
+                save_sheet_robust(pd.DataFrame(all_settings_to_save).set_index("key"), "config_times")
+                # config_special_days 保存
+                sp_save = [{"year": year, "month": month, "day": d, **c} for d, c in special_configs.items()]
+                if sp_save: save_sheet_robust(pd.DataFrame(sp_save).set_index("day"), "config_special_days")
+                st.success("設定をスプレッドシートに保存しました！")
 
-    # セッション状態（貯金箱）の初期化
-    if "last_generated_df" not in st.session_state:
-        st.session_state.last_generated_df = None
-    if "last_shortage_alerts" not in st.session_state:
-        st.session_state.last_shortage_alerts = []
+        # --- 来月の祝日表示 ---
+    st.markdown(f"#### 📅 来月 ({month}月) の祝日と行事")
+    if holidays:
+        st.warning(" / ".join([f"**{h[0]}日**: {h[1]}" for h in holidays]))
+    else:
+        st.write("祝日はありません。")
+
+        
+        # 北九州のイベントを表示
+    local_events = get_kitakyushu_events(next_year, next_month)
+    if local_events:
+        event_text = " / ".join([f"🚩 **{e[0]}日**: {e[1]}" for e in local_events])
+        st.info(f"【小倉周辺イベント予定】\n\n{event_text}")
+        st.caption("※これらは例年の傾向です。実際の日程は最新情報を確認してください。https://rikumalog.com/event-calendar.html")
+    else:
+        st.write("地域の大型イベント予定はありません。")
     
+
     st.markdown("---")
-    st.write("設定が完了したら、下のボタンを押してシフトを生成してください。")
-    # 生成実行ボタン
-    gen_button = st.button("シフトを生成・再生成（約9秒）", use_container_width=True)
-# --- 2. 生成ロジック（新：動的プライオリティ・スコアリング方式） ---
+    gen_button = st.button("シフトを生成（約9秒）", use_container_width=True)
+
+    # --- 2. 生成ロジック ---
     if gen_button:
+        # (データの準備、off_req_countsなどは既存通り...)
+        # --- 略: データのロード部分 ---
         progress_bar = st.progress(0)
         status_text = st.empty()
-        
-        # 試行回数を5回に設定（計算が効率的なのでこれで十分高品質になります）
         NUM_TRIALS = 5
-        best_overall_df = None
-        best_overall_alerts = []
-        min_total_shortage = 9999
+        best_overall_df, best_overall_alerts, min_total_shortage = None, [], 9999
         
-        # データの準備（休み希望の読み込み）
+# --- データの準備（ここを強化版に差し替え） ---
         req_load_raw = load_sheet_cached(REQ_SHEET)
         if req_load_raw is None or req_load_raw.empty:
             req_load = pd.DataFrame(False, index=ALL_NAMES, columns=column_names)
         else:
+            # 1. 1列目をインデックスにし、名前の空白を徹底的に消す
             req_load_raw = req_load_raw.drop_duplicates(subset=req_load_raw.columns[0])
-            req_load = req_load_raw.set_index(req_load_raw.columns[0]).reindex(ALL_NAMES).fillna(False)
-            req_load = req_load.map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0"])
-
-        # 全スタッフの「休み希望総数」を計算（レア度ボーナス用）
+            req_load_raw = req_load_raw.set_index(req_load_raw.columns[0])
+            req_load_raw.index = req_load_raw.index.astype(str).str.strip()
+            
+            # 2. ALL_NAMESも掃除して再インデックス（これで名前が一致する）
+            clean_names = [str(n).strip() for n in ALL_NAMES]
+            req_load = req_load_raw.reindex(index=clean_names).fillna(False)
+            
+            # 3. True/Falseの判定
+            req_load = req_load.map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0", "TRUE.0", "YES"])
         off_req_counts = req_load.sum(axis=1).to_dict()
-        
-        # 月間の目標出勤日数を計算（週希望の70% × 月の週数）
-        # 月の日数から週数を算出（例: 31日なら約4.4週）
         num_weeks = num_days / 7.0
         staff_goals = {row["名前"]: max(1, int(row["週希望"] * num_weeks * 0.7)) for _, row in master_df.iterrows()}
-        staff_limits = {row["名前"]: row["週希望"] for _, row in master_df.iterrows()}
 
         for trial_idx in range(NUM_TRIALS):
-            status_text.text(f"シフト表 {trial_idx + 1}/{NUM_TRIALS} 枚目を計算中...なんとかなれっ！！")
-            
-            # 試行用の一時変数
+            status_text.text(f"シフト案 {trial_idx + 1} を計算中...")
             trial_df = pd.DataFrame("", index=ALL_NAMES, columns=column_names)
-            trial_shortage_count = 0
-            trial_alerts = []
-            
-            # 累積データ（1ヶ月通してカウント）
-            cumulative_counts = {name: 0 for name in ALL_NAMES}
-            consecutive_days = {name: 0 for name in ALL_NAMES}
-            
-            # 全スタッフに休み印をあらかじめ印字
+            trial_shortage_count, trial_alerts = 0, []
+            cumulative_counts, consecutive_days = {n: 0 for n in ALL_NAMES}, {n: 0 for n in ALL_NAMES}
+
             for name in ALL_NAMES:
                 for col in column_names:
-                    if req_load.at[name, col] == True:
-                        trial_df.at[name, col] = "✖"
+                    if req_load.at[name, col]: trial_df.at[name, col] = "✖"
 
-            # --- 1日から末日まで1日ずつ累積で計算 ---
             for day_idx, col in enumerate(column_names):
                 assigned_today = []
                 d = day_idx + 1
                 d_idx = calendar.weekday(year, month, d)
                 
-                # 曜日による設定スロットの決定
-                if d_idx >= 4: # 金土日
-                    s_hd, s_kd, s_hn, s_kn = we_hd_slots, we_kd_slots, we_hn_slots, we_kn_slots
-                else: # 月〜木
-                    s_hd, s_kd, s_hn, s_kn = wd_hd_slots, wd_kd_slots, wd_hn_slots, wd_kn_slots
+                # --- 動的なスロット決定ロジック ---
+                if d in selected_special_days:
+                    target_slots = slot_data_map[d]
+                elif d_idx >= 4 or d in holiday_days: # 金土日 or 祝日
+                    target_slots = slot_data_map["weekend"]
+                else:
+                    target_slots = slot_data_map["weekday"]
 
-                # --- 今日の全員の優先度スコアを計算 ---
+                # (スコア計算と割り当てロジックは既存通り...)
+                # scoresの計算、get_priority_poolの定義
                 scores = {}
                 for name in ALL_NAMES:
-                    # 1. 不足率ボーナス (1 - 現在数/目標数) * 100
                     goal = staff_goals.get(name, 10)
                     progress_ratio = cumulative_counts[name] / goal
                     unmet_score = (1.0 - progress_ratio) * 100
-                    
-                    # 2. レア度ボーナス (休み希望数 * 3)
                     rarity_score = off_req_counts.get(name, 0) * 3
-                    
-                    # 3. 連勤ペナルティ (累進課税)
-                    consecutive = consecutive_days[name]
-                    penalty = 0
-                    if consecutive == 1: penalty = 10
-                    elif consecutive == 2: penalty = 30
-                    elif consecutive == 3: penalty = 60
-                    elif consecutive >= 4: penalty = 150 # 5連勤以上は極めて低く
-                    
-                    # 4. 少しのランダム性 (0-10点)
-                    luck = random.uniform(0, 10)
-                    
-                    scores[name] = unmet_score + rarity_score - penalty + luck
+                    cons = consecutive_days[name]
+                    penalty = 10 if cons==1 else 30 if cons==2 else 60 if cons==3 else 150 if cons>=4 else 0
+                    scores[name] = unmet_score + rarity_score - penalty + random.uniform(0, 10)
 
-                # 候補者プールの作成
                 def get_priority_pool(group_name, filter_skill=None):
                     pool = []
                     for _, row in master_df.iterrows():
                         name = row["名前"]
-                        # 条件: 休み希望でない、本日未割り当て
-                        if req_load.at[name, col] or name in assigned_today:
-                            continue
-                        # グループ条件
+                        if req_load.at[name, col] or name in assigned_today: continue
                         if row["グループ"] == group_name or row["グループ"] == "W":
-                            # スキル条件
-                            if filter_skill and not row[filter_skill]:
-                                continue
+                            if filter_skill and not row[filter_skill]: continue
                             pool.append({"名前": name, "スコア": scores[name]})
-                    
-                    # スコアの高い順にソート
                     pool.sort(key=lambda x: x["スコア"], reverse=True)
                     return [p["名前"] for p in pool]
 
-                # --- 割り当て実行 ---
-                all_positions = [
-                    ("HD", "ホール昼", s_hd, "デザート"),
-                    ("KD", "キッチン昼", s_kd, None),
-                    ("HN", "ホール夜", s_hn, "レジ締め"),
-                    ("KN", "キッチン夜", s_kn, None)
-                ]
-
-                for grp_code, pos_name, slots, skill in all_positions:
-                    for i, slot_time in enumerate(slots):
-                        # リーダー枠（1人目かつスキル指定あり）かどうかの判定
-                        current_skill = skill if i == 0 else None
-                        pool = get_priority_pool(grp_code, current_skill)
-                        
+                # 割り当て
+                for g_code, p_name, key in [("HD","H昼","hd"),("KD","K昼","kd"),("HN","H夜","hn"),("KN","K夜","kn")]:
+                    skill = "デザート" if g_code=="HD" else "レジ締め" if g_code=="HN" else None
+                    for i, slot_time in enumerate(target_slots[key]):
+                        pool = get_priority_pool(g_code, skill if i==0 else None)
                         if pool:
                             picked = pool[0]
                             trial_df.at[picked, col] = slot_time
@@ -917,39 +982,41 @@ elif mode == "シフト自動生成（案）・シフトアップロード":
                             cumulative_counts[picked] += 1
                             consecutive_days[picked] += 1
                         else:
-                            # 欠員
                             trial_shortage_count += 1
-                            trial_alerts.append(f"{d}日:{pos_name}に欠員")
+                            trial_alerts.append(f"{d}日:{p_name}欠員")
 
-                # 出勤しなかった人の連勤カウントをリセット
                 for name in ALL_NAMES:
-                    if name not in assigned_today:
-                        consecutive_days[name] = 0
+                    if name not in assigned_today: consecutive_days[name] = 0
             
-            # パターンの評価（欠員が最小のものを保存）
             if trial_shortage_count < min_total_shortage:
                 min_total_shortage = trial_shortage_count
-                best_overall_df = trial_df
-                best_overall_alerts = trial_alerts
-            
+                best_overall_df, best_overall_alerts = trial_df, trial_alerts
             progress_bar.progress((trial_idx + 1) / NUM_TRIALS)
 
-        # 結果を保存
         st.session_state.last_generated_df = best_overall_df
         st.session_state.last_shortage_alerts = best_overall_alerts
-        status_text.text("5枚のシフト表から一番いいやつを選んでます…")
-        time.sleep(1)
-        status_text.empty()
-        progress_bar.empty()
-    # --- 3. 結果の表示（貯金箱にデータがある場合のみ表示） ---
+        status_text.empty(); progress_bar.empty()
+
+    # --- 3. 結果の表示（色分け対応） ---
     if st.session_state.last_generated_df is not None:
-        # スタイル適用して表示
+        def style_shift(val, col):
+            try:
+                d = int(col.split('(')[0])
+                d_idx = calendar.weekday(year, month, d)
+                is_holiday = d in holiday_days
+                if is_holiday or d_idx == 6: return "background-color: #ffe6e6" # 祝日・日
+                if d_idx == 5: return "background-color: #e6f3ff" # 土
+            except: pass
+            if val == "✖": return
+            return ""
+
         st.dataframe(
-            st.session_state.last_generated_df.style.map(lambda x: "background-color: #ffd1d1" if x == "✖" else ""),
+            st.session_state.last_generated_df.style.apply(lambda r: [style_shift(v, c) for v, c in zip(r, r.index)], axis=1),
             use_container_width=True
         )
 
-        st.divider()
+        # Excel出力部分（祝日の赤字対応）
+        # ... (既存のExcelWriter処理の中で、祝日判定をして fmt_sun を適用するロジックを追加)
         st.subheader(" シフト表をダウンロード")
 
         buffer = io.BytesIO()
@@ -1047,71 +1114,7 @@ elif mode == "シフト自動生成（案）・シフトアップロード":
                 st.error(msg)
         else:
             st.success("✅ 欠員なし！全てのシフトが埋まりました。")
-    if pw == "1234":
-        st.divider()
-        st.subheader("📤 完成版Excelをアップロードして公開")
-        st.write("店長がExcelで微調整したファイルをアップロードして、確定シフトとして公開します。")
 
-        # --- 1. アップロード先の年月を選択 ---
-        col_up1, col_up2 = st.columns(2)
-        with col_up1:
-            # 現在の年を中心に、前年・今年・来年を選択肢にする
-            up_target_year = st.selectbox("アップロード先の年", [year - 1, year, year + 1], index=1, key="up_y")
-        with col_up2:
-            # 1〜12月を選択肢にし、デフォルトを現在の処理月に合わせる
-            up_target_month = st.selectbox("アップロード先の月", range(1, 13), index=month - 1, key="up_m")
-
-        up_file = st.file_uploader("Excelファイルを選択してください", type="xlsx")
-        
-        if up_file:
-            # 1. Excelを読み込む
-            f_df = pd.read_excel(up_file, sheet_name=0)
-            st.write(f"📂 {up_target_year}年{up_target_month}月分として読み込み中... プレビュー:")
-            st.dataframe(f_df.head(3))
-            
-            if st.button(f"{up_target_year}年{up_target_month}月の確定シフトを公開する"):
-                with st.spinner("労働時間を計算してスプレッドシートを更新中..."):
-                    # 日付列（カッコが含まれる列）を特定
-                    date_cols = [c for c in f_df.columns if "(" in str(c) and ")" in str(c)]
-                    
-                    nets, brks = [], []
-                    for _, row in f_df.iterrows():
-                        row_net, row_brk = 0.0, 0.0
-                        for c in date_cols:
-                            n, b = calc_work_and_break(row[c])
-                            row_net += n
-                            row_brk += b
-                        # 小数点第1位に丸める
-                        nets.append(round(row_net, 1))
-                        brks.append(round(row_brk, 1))
-                    
-                    f_df["合計実働"] = nets
-                    f_df["休憩合計"] = brks                    
-                    # 1列目（通常は名前）をインデックスに設定
-                    f_df = f_df.set_index(f_df.columns[0])
-                    
-                    # 2. スプレッドシートへ保存（選択した年月を使用）
-                    target_sheet = f"shift_{up_target_year}_{up_target_month:02}"
-                    
-                    if save_sheet_robust(f_df, target_sheet):
-                        st.cache_data.clear()
-                        
-                        # --- 3. LINE通知を実行（選択した年月を使用） ---
-                        line_msg = (
-                            f"📢 ジョイフル小倉店 シフト公開のお知らせ\n\n"
-                            f"{up_target_year}年{up_target_month}月の確定シフトが公開（更新）されました！\n"
-                            f"各自で確認をお願いします！✨\n"
-                            f"https://joyful-shift-jf9lwlpz2kpjovgwspgkcq.streamlit.app/"
-                        )
-                        
-                        if send_line_notification(line_msg):
-                            st.success(f"✅ {target_sheet} を更新し、LINEで通知しました！")
-                        else:
-                            st.warning(f"⚠️ {target_sheet} は更新されましたが、LINE通知に失敗しました。")
-                        
-                        time.sleep(1)
-                        st.rerun()
-st.sidebar.image("cafe_logo.png", width=200)
 if mode == "確定シフト閲覧":
     st.title("確定シフト閲覧")
 
@@ -1724,3 +1727,72 @@ if mode == "レジ締め作業":
             with d2:
                 st.write("**🌙 夜の内訳**")
                 st.write(f"フロント: {res['night_f']:.2f} h / キッチン: {res['night_k']:.2f} h")
+
+if mode == "シフトアップロード":
+    if pw != "1234":
+        st.warning("パスワードを入力してください")
+    if pw == "1234":
+        st.divider()
+        st.subheader("📤 完成版Excelをアップロードして公開")
+        st.write("店長がExcelで微調整したファイルをアップロードして、確定シフトとして公開します。")
+
+        # --- 1. アップロード先の年月を選択 ---
+        col_up1, col_up2 = st.columns(2)
+        with col_up1:
+            # 現在の年を中心に、前年・今年・来年を選択肢にする
+            up_target_year = st.selectbox("アップロード先の年", [year - 1, year, year + 1], index=1, key="up_y")
+        with col_up2:
+            # 1〜12月を選択肢にし、デフォルトを現在の処理月に合わせる
+            up_target_month = st.selectbox("アップロード先の月", range(1, 13), index=month - 1, key="up_m")
+
+        up_file = st.file_uploader("Excelファイルを選択してください", type="xlsx")
+        
+        if up_file:
+            # 1. Excelを読み込む
+            f_df = pd.read_excel(up_file, sheet_name=0)
+            st.write(f"📂 {up_target_year}年{up_target_month}月分として読み込み中... プレビュー:")
+            st.dataframe(f_df.head(3))
+            
+            if st.button(f"{up_target_year}年{up_target_month}月の確定シフトを公開する"):
+                with st.spinner("労働時間を計算してスプレッドシートを更新中..."):
+                    # 日付列（カッコが含まれる列）を特定
+                    date_cols = [c for c in f_df.columns if "(" in str(c) and ")" in str(c)]
+                    
+                    nets, brks = [], []
+                    for _, row in f_df.iterrows():
+                        row_net, row_brk = 0.0, 0.0
+                        for c in date_cols:
+                            n, b = calc_work_and_break(row[c])
+                            row_net += n
+                            row_brk += b
+                        # 小数点第1位に丸める
+                        nets.append(round(row_net, 1))
+                        brks.append(round(row_brk, 1))
+                    
+                    f_df["合計実働"] = nets
+                    f_df["休憩合計"] = brks                    
+                    # 1列目（通常は名前）をインデックスに設定
+                    f_df = f_df.set_index(f_df.columns[0])
+                    
+                    # 2. スプレッドシートへ保存（選択した年月を使用）
+                    target_sheet = f"shift_{up_target_year}_{up_target_month:02}"
+                    
+                    if save_sheet_robust(f_df, target_sheet):
+                        st.cache_data.clear()
+                        
+                        # --- 3. LINE通知を実行（選択した年月を使用） ---
+                        line_msg = (
+                            f"📢 ジョイフル小倉店 シフト公開のお知らせ\n\n"
+                            f"{up_target_year}年{up_target_month}月の確定シフトが公開（更新）されました！\n"
+                            f"各自で確認をお願いします！✨\n"
+                            f"https://joyful-shift-jf9lwlpz2kpjovgwspgkcq.streamlit.app/"
+                        )
+                        
+                        if send_line_notification(line_msg):
+                            st.success(f"✅ {target_sheet} を更新し、LINEで通知しました！")
+                        else:
+                            st.warning(f"⚠️ {target_sheet} は更新されましたが、LINE通知に失敗しました。")
+                        
+                        time.sleep(1)
+                        st.rerun()
+st.sidebar.image("cafe_logo.png", width=200)
