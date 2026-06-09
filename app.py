@@ -75,8 +75,8 @@ def export_cleaning_handwriting_sheet(year, period_label):
         # 2. 画像（横幅に収まるようサイズを微調整）
         try:
             worksheet.insert_image('B2', 'cleaning_map.png', {
-                'x_scale': 0.45, 
-                'y_scale': 0.45,
+                'x_scale': 0.275, 
+                'y_scale': 0.275,
                 'x_offset': 10,
                 'y_offset': 5
             })
@@ -1460,11 +1460,11 @@ if mode == "清掃記録":
 
                 # 画像を巨大化して、下の余白を完全に埋める
                 try:
-                    worksheet.insert_image('A12', 'cleaning_map.png', {
-                        'x_scale': 0.85, # 85%まで拡大
-                        'y_scale': 0.85,
+                    worksheet.insert_image('A11', 'cleaning_map.png', {
+                        'x_scale': 0.385, # 85%まで拡大
+                        'y_scale': 0.4,
                         'x_offset': 10,
-                        'y_offset': 10
+                        'y_offset': 6
                     })
                 except: pass
 
