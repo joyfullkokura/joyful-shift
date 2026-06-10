@@ -1153,28 +1153,23 @@ if mode == "確定シフト閲覧":
     date_str_today = today.strftime("%Y/%m/%d")
     tweet_sheet = "daily_tweets"
     
-    # 【重要】load_sheet_no_cacheを使わず、直接読み込む（重複削除を回避）
     if "tweet_data_cache" not in st.session_state:
         with st.spinner("つぶやきを読み込み中..."):
             try:
-                # 重複削除機能のない生の読み込み
                 raw_tweets = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=tweet_sheet, ttl=0)
                 if raw_tweets is None or raw_tweets.empty:
                     df_t = pd.DataFrame(columns=["日付", "名前", "メッセージ"])
                 else:
-                    # 余計な index 列などが混じっていたら削除
                     df_t = raw_tweets.loc[:, ~raw_tweets.columns.str.contains('^Unnamed|^index')]
                 st.session_state.tweet_data_cache = df_t
             except:
                 st.session_state.tweet_data_cache = pd.DataFrame(columns=["日付", "名前", "メッセージ"])
 
-    # 今日のつぶやきを抽出
     current_all_tweets = st.session_state.tweet_data_cache
-    today_tweet_dict = {}
+    today_tweet_dict = {} 
+
     if not current_all_tweets.empty:
-        # 日付の一致を判定（文字列として比較）
         current_all_tweets["日付"] = current_all_tweets["日付"].astype(str)
-        # 「2026/06/01」でも「2026-06-01」でも一致するように掃除
         today_mask = current_all_tweets["日付"].str.contains(date_str_today.replace("/", ".")) | \
                      current_all_tweets["日付"].str.contains(date_str_today)
         
@@ -1182,7 +1177,7 @@ if mode == "確定シフト閲覧":
         today_tweet_dict = dict(zip(today_only["名前"].astype(str).str.strip(), today_only["メッセージ"]))
 
     # --- 2. シフト表の表示 ---
-    t_day, t_month, t_year = today.day, today.month, today.year
+    t_month, t_year = today.month, today.year
     day_prefix = f"{t_day}(" 
     today_sheet = f"shift_{t_year}_{t_month:02}"
     today_df = load_sheet_cached(today_sheet)
@@ -1220,14 +1215,10 @@ if mode == "確定シフト閲覧":
                             with st.popover("💬"):
                                 msg_input = st.text_input(f"ひとこと(20字)", max_chars=20, key=f"t_{i_key}")
                                 if st.button("送信", key=f"b_{i_key}"):
-                                    # 保存用データ作成
                                     new_data = pd.DataFrame([{"日付": date_str_today, "名前": name_s, "メッセージ": msg_input}])
-                                    # 同じ人の今日の投稿があれば消して合体
                                     old_data = st.session_state.tweet_data_cache
                                     filtered_old = old_data[~((old_data["日付"].astype(str).str.contains(date_str_today)) & (old_data["名前"].astype(str).str.strip() == name_s))]
                                     updated_df = pd.concat([filtered_old, new_data], ignore_index=True)
-                                    
-                                    # 保存（インデックスを名前ではなく「通し番号」にするため reset_index）
                                     if save_sheet_robust(updated_df.set_index(updated_df.columns[0]), tweet_sheet):
                                         st.session_state.tweet_data_cache = updated_df
                                         st.rerun()
@@ -1244,63 +1235,143 @@ if mode == "確定シフト閲覧":
 
     st.divider()
 
-    # --- 全体表示の年月選択（デフォルトを現在に設定） ---
+    # --- 全体表示の年月選択 ---
     col_y, col_m = st.columns(2)
-    
-    # 年のデフォルト設定
-# --- 確定シフト閲覧の年リスト修正 ---
-        # 今年を中心に、去年・今年・来年・再来年を自動でリストにする
     year_list = [today.year - 1, today.year, today.year + 1, today.year + 2]
-        
     try:
         default_year_idx = year_list.index(today.year)
     except ValueError:
-        default_year_idx = 1 # 万が一見つからなければ今年のインデックス(1)にする
+        default_year_idx = 1 
             
     target_year = col_y.selectbox("年", year_list, index=default_year_idx)
-    # 月のデフォルト設定（index=現在の月-1）
-    target_month = col_m.selectbox("月", range(1, 13), index=t_month - 1)
+    target_month = col_m.selectbox("月", range(1, 13), index=today.month - 1)
     
     sheet_name = f"shift_{target_year}_{target_month:02}"
-    
-    # 管理者用メモ
-    if pw == "1234":
-        st.caption(f"（管理者用メモ：シート名「{sheet_name}」を探しています）")
-
     confirmed_df = load_confirmed_shift(sheet_name)
     
     if confirmed_df.empty:
         st.info(f"💡 {target_year}年{target_month}月の確定シフトはまだ公開されていません。")
     else:
         st.write("---")
-        # 選択肢もきれいに掃除
         search_name = st.selectbox("自分の名前を選択してね！✨", ["(全員分表示)"] + [str(n).strip() for n in ALL_NAMES])
         
         def apply_styling(row):
-            # 1. 判定用のターゲット（選択された名前）を掃除
             target = str(search_name).strip()
-            
-            # 2. 行の「名前」を特定する
             row_index_name = str(row.name).strip()
-            row_first_cell = str(row.iloc[0]).strip() if len(row) > 0 else ""
-            
-            # インデックス、または1列目が選択された名前と一致するか？
-            if target != "(全員分表示)" and (target == row_index_name or target == row_first_cell):
-                # 一致したら行全体を強調
+            if target != "(全員分表示)" and target == row_index_name:
                 return ['background-color: #FFF9C4; color: black; font-weight: bold; border: 2px solid #FFD700'] * len(row)
             return [''] * len(row)
 
-        # スタイル適用
         styled_df = confirmed_df.style.apply(apply_styling, axis=1).map(
             lambda x: "color: #E60012; font-weight: bold;" if str(x).strip() == "✖" else ""
         )
+        st.dataframe(styled_df, use_container_width=True, height=600)
+
+        # --- 3. 確定シフトのダウンロード機能（ここを if mode 内に移動しました！） ---
+        st.write("")
+        col_dl, _ = st.columns([1, 4])
         
-        # 表示
-        st.dataframe(
-            styled_df,
-            use_container_width=True,
-            height=600
-        )
+        with col_dl:
+            buf = io.BytesIO()
+            confirmed_export_df = confirmed_df.fillna("")
+
+            with pd.ExcelWriter(buf, engine='xlsxwriter', engine_kwargs={'options': {'nan_inf_to_errors': True}}) as writer:
+                confirmed_export_df.to_excel(writer, sheet_name='確定シフト', startrow=3)
+                workbook  = writer.book
+                worksheet = writer.sheets['確定シフト']
+                
+                # 印刷設定
+                worksheet.set_landscape()
+                worksheet.set_paper(9)
+                worksheet.set_margins(0.3, 0.3, 0.5, 0.5) 
+                worksheet.fit_to_pages(1, 1)
+
+                # --- 書式設定 ---
+                fmt_title = workbook.add_format({'bold': True, 'size': 18, 'align': 'center', 'valign': 'vcenter'})
+                fmt_base = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'size': 11})
+                fmt_header = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#F2F2F2', 'align': 'center', 'valign': 'vcenter'})
+                fmt_sat = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#E6F3FF', 'font_color': '#0000FF', 'align': 'center', 'valign': 'vcenter'})
+                fmt_sun = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#FFE6E6', 'font_color': '#FF0000', 'align': 'center', 'valign': 'vcenter'})
+                fmt_off = workbook.add_format({'font_color': '#FF0000', 'bold': True, 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+                
+                # ★追加：枠線のない書式（メッセージ用）
+                fmt_msg_text = workbook.add_format({'bold': True, 'size': 20, 'align': 'center', 'valign': 'vcenter', 'font_name': 'Meiryo'})
+                fmt_credit = workbook.add_format({'size': 8, 'font_color': '#999999', 'italic': True, 'align': 'right'})
+
+                # タイトルの書き込み
+                last_col_idx = len(confirmed_export_df.columns)
+                worksheet.merge_range(0, 0, 1, last_col_idx, f"ジョイフル小倉店 {target_year}年{target_month}月 確定シフト表", fmt_title)
+
+                # 見た目の調整
+                worksheet.set_row(3, 40) # ヘッダー
+                for r in range(1, len(confirmed_export_df) + 1):
+                    worksheet.set_row(r + 3, 35) # データ行
+
+                worksheet.set_column(0, 0, 18)
+                worksheet.set_column(1, last_col_idx, 12)
+
+                # ヘッダー書き込み
+                worksheet.write(3, 0, "名前", fmt_header)
+                holiday_days = [h[0] for h in get_month_holidays_list(target_year, target_month)]
+                for i, col_name in enumerate(confirmed_export_df.columns):
+                    col_idx = i + 1
+                    c_str = str(col_name)
+                    is_holiday = False
+                    try:
+                        d_num = int(c_str.split('(')[0])
+                        if d_num in holiday_days: is_holiday = True
+                    except: pass
+                    if "(日)" in c_str or is_holiday: worksheet.write(3, col_idx, c_str, fmt_sun)
+                    elif "(土)" in c_str: worksheet.write(3, col_idx, c_str, fmt_sat)
+                    else: worksheet.write(3, col_idx, c_str, fmt_header)
+
+                # データ書き込み
+                for r_idx, (idx, row) in enumerate(confirmed_export_df.iterrows()):
+                    worksheet.write(r_idx + 4, 0, str(idx), fmt_base)
+                    for c_idx, val in enumerate(row):
+                        v_str = str(val).strip()
+                        fmt = fmt_off if v_str == "✖" else fmt_base
+                        worksheet.write(r_idx + 4, c_idx + 1, v_str, fmt)
+
+                # --- 8. 【改善】月替わりメッセージエリア（枠線をなしにしました） ---
+                info_start_row = len(confirmed_export_df) + 6
+                monthly_messages = {
+                    1: "あけましておめでとうございます！🎍 元気にスタートしましょう！🌅",
+                    2: "まだまだ極寒！🧣 風邪を引かないよう体調第一で頑張りましょう！🍫",
+                    3: "出会いと別れの季節🌸 卒業メンバーに感謝し笑顔で送り出しましょう！✨",
+                    4: "新年度スタート！🎒 新しい仲間に優しく教えてあげてね。🤝",
+                    5: "GWお疲れ様でした！🍀 無理せずマイペースに頑張ろう！☀️",
+                    6: "梅雨でジメジメ…☔ 明るい笑顔でお客様をお迎えしましょう！🐌",
+                    7: "夏本番！☀️ 祭りも楽しみつつ、水分補給はこまめに摂ってね！🥤",
+                    8: "繁忙期！🥩 みんなの協力が頼りです。頑張っていきましょう！🔥",
+                    9: "秋の気配🌾 美味しいものを食べて、お仕事楽しみましょう！🎑",
+                    10: "食欲の秋！🎃 期間限定メニューをおすすめしていきましょう！🍭",
+                    11: "冷え込んできました🍂 暖かい格好をして自分を労わってね。🍵",
+                    12: "いよいよ年末！🎄 感謝の気持ちを込めて駆け抜けよう！❄️"
+                }
+                current_msg = monthly_messages.get(target_month, "今月もみんなで頑張りましょう！✨")
+
+                # メッセージ書き込み（fmt_msg_text は枠線なし）
+                worksheet.merge_range(info_start_row, 3, info_start_row + 4, last_col_idx, f"♪ {current_msg} ♪", fmt_msg_text)
+
+                # 左下に画像を貼り付け
+                try:
+                    worksheet.insert_image(info_start_row, 0, 'display_icon.png', {'x_scale': 0.6, 'y_scale': 0.6})
+                except: pass
+
+                # 右下にクレジット
+                worksheet.write(info_start_row + 6, last_col_idx, "System created by Ichiro Ogi", fmt_credit)
+
+            st.download_button(
+                label="📥 確定シフトを保存 (Excel/印刷用)",
+                data=buf.getvalue(),
+                file_name=f"shift_{target_year}_{target_month:02}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+# --- 確定シフト閲覧セクション終了 ---
+
+           
 if mode == "清掃記録":
     st.title("🧹 モップ清掃記録")
 
