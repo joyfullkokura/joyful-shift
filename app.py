@@ -12,6 +12,9 @@ import streamlit.components.v1 as components  # 追加
 import requests
 import json
 import jpholiday
+def save_config_data(df, worksheet_name="config"):
+    """設定シート専用の保存関数（store_idチェックなし）"""
+    return save_sheet_robust(df, worksheet_name, target_url=SPREADSHEET_URL)
 def calc_work_and_break_for_pair(val1, val2):
     """2つの時間枠（前半・後半）を合算して正しい休憩を計算する"""
     net1, brk1 = calc_work_and_break(val1)
@@ -510,11 +513,6 @@ def save_sheet_robust(df, worksheet_name, target_url=None):
         
         # ★★★ 保存前に列名を確認 ★★★
         # store_id などの重要な列が欠落していないか確認
-        required_cols = ['store_id']
-        missing_cols = [c for c in required_cols if c not in save_df.columns]
-        if missing_cols:
-            st.warning(f"⚠️ 保存データに {missing_cols} 列が不足しています")
-        
         # 指定したURLとシート名に書き込む
         conn.update(spreadsheet=target_url, worksheet=worksheet_name, data=save_df)
         st.cache_data.clear()
@@ -1141,7 +1139,7 @@ if mode == "従業員名簿管理":
             )
             if st.button("📢 お知らせを更新する", use_container_width=True):
                 updated_notice_df = pd.DataFrame([[new_notice]], columns=["message"])
-                if save_sheet_robust(updated_notice_df, "config"):
+                if save_config_data(updated_notice_df, "config"):
                     st.success("お知らせを更新しました！全員の画面に反映されます。")
                     st.rerun()
         
