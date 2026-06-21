@@ -2883,8 +2883,8 @@ elif mode == "シフト自動生成（案）":
         st.subheader("📥 シフト表をダウンロード")
 
 # --- Excel出力（4行レイアウト・動的計算式版） ---
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
             # 1. 出力用データの準備（2行→4行セットに加工）
             export_df = st.session_state.last_generated_df.copy()
             export_df = export_df.reset_index()
