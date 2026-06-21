@@ -2738,15 +2738,68 @@ elif mode == "シフト自動生成（案）":
         
         if final_all_ok:
             st.balloons()
+# ==========================================
+        # ★ 最終欠員集計ロジック（ここを差し替え） ★
+        # ==========================================
+        status_text.text("最終的な欠員状況を確認中...")
+        
+        final_shortage_alerts = []
+        
+        # slot_memory（ステップ1で作った全必要枠のリスト）をスキャンする
+        if 'slot_memory' in best_overall_df.attrs:
+            actual_memory = best_overall_df.attrs['slot_memory']
+            
+            # 日付ごとに欠員をまとめるための辞書 { 日: [欠員ポジション1, 2...] }
+            day_shortages = {}
+            
+            for sid, data in actual_memory.items():
+                # その枠に誰も割り当てられていない、または名前が空の場合
+                # 注意：assigned_to はステップ3のスワップ処理でも正しく更新されている必要があります
+                assigned = data.get("assigned_to")
+                
+                # 念のため、実際の表(best_overall_df)のその場所が本当に空かどうかも再確認
+                col = data["col"]
+                name = assigned if assigned else ""
+                
+                # 表の中でその人がその日働いているかチェック
+                is_filled = False
+                if name:
+                    v1 = str(best_overall_df.at[name, col]).strip() if name in best_overall_df.index else ""
+                    v2 = str(best_overall_df.at[f"{name} ", col]).strip() if f"{name} " in best_overall_df.index else ""
+                    if "-" in v1 or "-" in v2:
+                        is_filled = True
+                
+                if not is_filled:
+                    d = data["day"]
+                    pos_jp = {"hd":"H昼", "kd":"K昼", "hn":"H夜", "kn":"K夜"}.get(data["position"], data["position"])
+                    if d not in day_shortages:
+                        day_shortages[d] = []
+                    day_shortages[d].append(pos_jp)
+
+            # 辞書をメッセージ形式に変換
+            for d in sorted(day_shortages.keys()):
+                positions = day_shortages[d]
+                # 同じポジションが複数ある場合は「H昼×2」のように表示
+                from collections import Counter
+                pos_counts = Counter(positions)
+                pos_str = ", ".join([f"{p}×{count}" if count > 1 else p for p, count in pos_counts.items()])
+                final_shortage_alerts.append(f"{d}日: {pos_str} 欠員")
 
         # ==========================================
         # ★ 最終保存 ★
         # ==========================================
         st.session_state.last_generated_df = best_overall_df
-        st.session_state.last_shortage_alerts = []
+        # 修正ポイント：空にするのではなく、計算した final_shortage_alerts を入れる
+        st.session_state.last_shortage_alerts = final_shortage_alerts
+        
         status_text.empty()
         progress_bar.empty()
-        st.success("✅ 全スタッフの休憩計算を含め、シフト生成が完了しました！")
+        
+        if not final_shortage_alerts:
+            st.balloons()
+            st.success("✅ 欠員なし！全てのシフトが埋まりました。")
+        else:
+            st.warning(f"⚠️ シフトは生成されましたが、{len(final_shortage_alerts)}日分の欠員があります。")
 
 
 
@@ -2892,7 +2945,7 @@ elif mode == "シフト自動生成（案）":
                 'align': 'center',      # 中央揃え
                 'valign': 'vcenter',    # 上下中央揃え
                 'num_format': '0.0',    # 小数点第1位まで表示
-                'size': 11              # 文字サイズを少し大きく
+                'size': 17            # 文字サイズを少し大きく
             })
             fmt_pct = workbook.add_format({
                 'bold': True,
@@ -2901,30 +2954,30 @@ elif mode == "シフト自動生成（案）":
                 'align': 'center',
                 'valign': 'vcenter', 
                 'num_format': '0%', 
-                'size': 10,
+                'size': 16,
                 'font_name': 'Meiryo UI'
             })
             fmt_header = workbook.add_format({
                 'bold': True, 'border': 2, 'bg_color': '#D9D9D9',
-                'align': 'center', 'valign': 'vcenter', 'size': 9, 'font_name': 'Meiryo UI'
+                'align': 'center', 'valign': 'vcenter', 'size': 15, 'font_name': 'Meiryo UI'
             })
             fmt_merge = workbook.add_format({
                 'bold': True, 'top': 2, 'bottom': 2, 'left': 1, 'right': 1,
                 'bg_color': '#F2F2F2', 'align': 'center', 'valign': 'vcenter',
-                'size': 10, 'font_name': 'Meiryo UI'
+                'size': 17, 'font_name': 'Meiryo UI'
             })
             fmt_row1 = workbook.add_format({
                 'left': 1, 'right': 1, 'top': 2, 'bottom': 7,
-                'align': 'center', 'valign': 'vcenter', 'size': 9, 'font_name': 'Meiryo UI'
+                'align': 'center', 'valign': 'vcenter', 'size': 14, 'font_name': 'Arial Narrow'
             })
             fmt_row2 = workbook.add_format({
                 'left': 1, 'right': 1, 'top': 7, 'bottom': 2,
-                'align': 'center', 'valign': 'vcenter', 'size': 9, 'font_name': 'Meiryo UI'
+                'align': 'center', 'valign': 'vcenter', 'size': 14, 'font_name': 'Arial Narrow'
             })
             fmt_calc = workbook.add_format({
                 'left': 1, 'right': 1, 'top': 2, 'bottom': 2,
                 'bg_color': '#FFFFCC', 'align': 'center', 'valign': 'vcenter',
-                'num_format': '0.00', 'size': 8, 'font_name': 'Meiryo UI'
+                'num_format': '0.00', 'size': 10, 'font_name': 'Meiryo UI'
             })
             fmt_break = workbook.add_format({
                 'left': 1, 'right': 1, 'top': 2, 'bottom': 2,
@@ -2934,16 +2987,16 @@ elif mode == "シフト自動生成（案）":
             fmt_total = workbook.add_format({
                 'bold': True, 'top': 2, 'bottom': 2, 'left': 1, 'right': 1,
                 'bg_color': '#FFFFCC', 'align': 'center', 'valign': 'vcenter',
-                'num_format': '0.00', 'size': 9, 'font_name': 'Meiryo UI'
+                'num_format': '0.00', 'size': 14, 'font_name': 'Meiryo UI'
             })
         
             fmt_sat = workbook.add_format({
                 'bold': True, 'border': 2, 'bg_color': '#E6F3FF', 'font_color': '#0000FF',
-                'align': 'center', 'valign': 'vcenter', 'size': 9, 'font_name': 'Meiryo UI'
+                'align': 'center', 'valign': 'vcenter', 'size': 16, 'font_name': 'Meiryo UI'
             })
             fmt_sun = workbook.add_format({
                 'bold': True, 'border': 2, 'bg_color': '#FFE6E6', 'font_color': '#FF0000',
-                'align': 'center', 'valign': 'vcenter', 'size': 9, 'font_name': 'Meiryo UI'
+                'align': 'center', 'valign': 'vcenter', 'size': 16, 'font_name': 'Meiryo UI'
             })
 
             # 6. ヘッダー行
@@ -3025,9 +3078,9 @@ elif mode == "シフト自動生成（案）":
                 worksheet.merge_range(base_row, 1, base_row + 3, 1, name, fmt_merge)
 
                 # 行の高さ設定
-                worksheet.set_row(base_row, 20)      # 1行目
-                worksheet.set_row(base_row + 1, 20)  # 2行目
-                worksheet.set_row(base_row + 2, 17)  # 3行目
+                worksheet.set_row(base_row, 23)      # 1行目
+                worksheet.set_row(base_row + 1, 23)  # 2行目
+                worksheet.set_row(base_row + 2, 12)  # 3行目
                 # 4行目（休憩詳細）はデータ集計用なので非表示にする設定
                 worksheet.set_row(base_row + 3, 17, None, {'hidden': True})
 
@@ -3118,14 +3171,67 @@ elif mode == "シフト自動生成（案）":
 # --- 仕上げ：ウィンドウ枠の固定 ---
             worksheet.freeze_panes(header_row + 1, 2)
 
-        # ★ st.download_button は with ブロックの外、if st.session_state... の内側
-        st.download_button(
-            label="📥 このシフト表をExcelで保存",
-            data=buffer.getvalue(),
-            file_name=f"shift_{year}_{month:02}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
+            # --- ★ config_timesシートから時間を取得してドロップダウンに設定 ---
+            try:
+                # 1. スプレッドシートから直接設定を読み込む
+                conf_df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="config_times", ttl=0)
+                
+                valid_shifts = []
+                if conf_df is not None and not conf_df.empty:
+                    # start列とend列が存在するか確認
+                    if "start" in conf_df.columns and "end" in conf_df.columns:
+                        for _, row in conf_df.iterrows():
+                            s_t = str(row["start"]).strip()
+                            e_t = str(row["end"]).strip()
+                            # "10:00" のように時刻形式になっているものだけを抽出
+                            if ":" in s_t and ":" in e_t:
+                                valid_shifts.append((s_t, e_t))
+                
+                # 2. 重複を削除
+                valid_shifts = list(set(valid_shifts))
+                
+                # 3. スタート時間が早い順に並べ替え（time_to_float関数を利用）
+                valid_shifts.sort(key=lambda x: time_to_float(x[0]))
+                
+                # 4. "10:00-15:00" の形式に整形
+                dropdown_list = [f"{s}-{e}" for s, e in valid_shifts]
+                
+                # 5. 基本の選択肢（✖や空欄）を追加
+                dropdown_list.extend(['✖', ' '])
+
+                # リストが空（または読み込み失敗）の場合のデフォルト
+                if len(dropdown_list) <= 2:
+                    dropdown_list = ['10:00-15:00', '16:00-23:00', '10:00-22:00', '✖', ' ']
+
+                # 6. Excelの入力規則（ドロップダウン）を適用
+                worksheet.data_validation(header_row + 1, date_start, total_row_idx - 1, date_start + num_dates - 1, {
+                    'validate': 'list',
+                    'source': dropdown_list,
+                    'input_title': 'シフト選択',
+                    'input_message': '直接入力可能',
+                    'error_type': 'information', # リスト外の自由入力を許可
+                    'show_error': True
+                })
+            except Exception as e:
+                # 万が一エラーが起きてもダウンロードボタンを消さないためのガード
+                st.sidebar.error(f"ドロップダウン作成エラー: {e}")
+
+        # ↑ ここまでが with pd.ExcelWriter(...) の中身
+                # エラーが起きてもエクセル作成を止めないためのガード
+                pass
+
+        # ↑ ここまでが with pd.ExcelWriter(...) as writer: の中身（インデント8つ分）
+
+    # --- ★ここからボタン（withブロックの外に出す。インデント4つ分） ---
+    st.write("") # スペース
+    st.download_button(
+        label="📥 このシフト表をExcelで保存",
+        data=buffer.getvalue(),
+        file_name=f"shift_{year}_{month:02}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        key="excel_download_btn" # 重複防止用のキー
+    )
 
     # 欠員警告の表示
     st.divider()
