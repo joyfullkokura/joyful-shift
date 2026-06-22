@@ -1610,10 +1610,7 @@ elif mode == "シフト自動生成（案）":
     current_holidays = get_month_holidays_list(year, month)
     holiday_days = [h[0] for h in current_holidays]
     
-    # 来月の祝日計算
-    next_month_date = (v_date + timedelta(days=32)).replace(day=1)
-    next_year, next_month = next_month_date.year, next_month_date.month
-    holidays = get_month_holidays_list(next_year, month)
+    holidays = get_month_holidays_list(year, month)
 
     # ★★★ 保存データの読み込み ★★★
     stored_df = load_sheet_no_cache("config_times", pd.DataFrame())
@@ -1993,15 +1990,17 @@ elif mode == "シフト自動生成（案）":
             "k_n": st.session_state.get(f"sp_kn_{d}", k_n_we)
         }
 
-    # ★★★ フォームの外 ★★★
+# ★★★ フォームの外 ★★★
     st.markdown("---")
-    st.markdown(f"#### 📅 来月（{next_month}月）の祝日と行事")
+    # next_month ではなく month を使う
+    st.markdown(f"#### 📅 {month}月の祝日と行事")
     if holidays:
         st.warning(" / ".join([f"**{h[0]}日**: {h[1]}" for h in holidays]))
     else:
         st.write("祝日はありません。")
 
-    local_events = get_kitakyushu_events(next_year, next_month)
+    # next_year, next_month ではなく year, month を使う
+    local_events = get_kitakyushu_events(year, month)
     if local_events:
         event_text = " / ".join([f"🚩 **{e[0]}日**: {e[1]}" for e in local_events])
         st.info(f"【小倉周辺イベント予定】\n\n{event_text}")
