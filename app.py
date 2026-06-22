@@ -2883,8 +2883,8 @@ elif mode == "シフト自動生成（案）":
         st.subheader("📥 シフト表をダウンロード")
 
 # --- Excel出力（4行レイアウト・動的計算式版） ---
-        buf = io.BytesIO()
-        with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
             # 1. 出力用データの準備（2行→4行セットに加工）
             export_df = st.session_state.last_generated_df.copy()
             export_df = export_df.reset_index()
@@ -3223,29 +3223,29 @@ elif mode == "シフト自動生成（案）":
         # ↑ ここまでが with pd.ExcelWriter(...) as writer: の中身（インデント8つ分）
 
     # --- ★ここからボタン（withブロックの外に出す。インデント4つ分） ---
-    st.write("") # スペース
-    st.download_button(
-        label="📥 このシフト表をExcelで保存",
-        data=buffer.getvalue(),
-        file_name=f"shift_{year}_{month:02}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-        key="excel_download_btn" # 重複防止用のキー
-    )
+        st.write("") # スペース
+        st.download_button(
+            label="📥 このシフト表をExcelで保存",
+            data=buffer.getvalue(),
+            file_name=f"shift_{year}_{month:02}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key="excel_download_btn" # 重複防止用のキー
+        )
 
     # 欠員警告の表示
-    st.divider()
-    st.subheader("欠員状況の確認")
-    if st.session_state.last_shortage_alerts:
-        import re
-        def extract_day(msg):
-            match = re.search(r'\d+', msg)
-            return int(match.group()) if match else 0
-        st.warning(f"今月の合計欠員数: **{len(st.session_state.last_shortage_alerts)}枠**")
-        for msg in sorted(st.session_state.last_shortage_alerts, key=extract_day):
-            st.error(msg)
-    else:
-        st.success("✅ 欠員なし！全てのシフトが埋まりました。")
+        st.divider()
+        st.subheader("欠員状況の確認")
+        if st.session_state.last_shortage_alerts:
+            import re
+            def extract_day(msg):
+                match = re.search(r'\d+', msg)
+                return int(match.group()) if match else 0
+            st.warning(f"今月の合計欠員数: **{len(st.session_state.last_shortage_alerts)}枠**")
+            for msg in sorted(st.session_state.last_shortage_alerts, key=extract_day):
+                st.error(msg)
+        else:
+            st.success("✅ 欠員なし！全てのシフトが埋まりました。")
 
 if mode == "確定シフト閲覧":
     st.title("確定シフト閲覧")
