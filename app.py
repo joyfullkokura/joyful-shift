@@ -3210,7 +3210,8 @@ elif mode == "シフト自動生成（案）":
                     'input_title': 'シフト選択',
                     'input_message': '直接入力可能',
                     'error_type': 'information', # リスト外の自由入力を許可
-                    'show_error': True
+                    'show_error': False,
+                    'ignore_blank': True
                 })
             except Exception as e:
                 # 万が一エラーが起きてもダウンロードボタンを消さないためのガード
