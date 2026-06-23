@@ -889,7 +889,7 @@ if st.session_state.is_global_admin:
                         st.success(f"店舗「{new_name}」を登録しました！")
                         st.rerun()
 
-    # ==========================================
+# ==========================================
     # 既存店舗の編集タブ
     # ==========================================
     with tab_edit:
@@ -929,7 +929,7 @@ if st.session_state.is_global_admin:
                         e_i1e = st.selectbox("休憩1 終了", TIME_OPTIONS, index=get_t_idx(s_info.get('idle1_e')), key="edit_i1e")
                     with ci2:
                         e_i2s = st.selectbox("休憩2 開始", TIME_OPTIONS, index=get_t_idx(s_info.get('idle2_s')), key="edit_i2s")
-                        e_i2e = st.selectbox("休憩2 終了", TIME_OPTIONS, index=get_t_idx(s_info.get('idle2_e')), key="edit_i2e")
+                        e_i2e = st.selectbox("休憩2 終了", TIME_OPTIONS, index=get_t_idx(s_info.get('idle1_e')), key="edit_i2e")
                     with ci3:
                         e_i3s = st.selectbox("休憩3 開始", TIME_OPTIONS, index=get_t_idx(s_info.get('idle3_s')), key="edit_i3s")
                         e_i3e = st.selectbox("休憩3 終了", TIME_OPTIONS, index=get_t_idx(s_info.get('idle3_e')), key="edit_i3e")
@@ -951,8 +951,9 @@ if st.session_state.is_global_admin:
                     st.write("▼ この店舗で表示する機能")
                     st.caption("チェックを入れた機能のみがサイドメニューに表示されます")
                     
-                    # 現在の設定を読み込み
-                    current_features = str(s_info.get('enabled_features', '')).split(",") if pd.notna(s_info.get('enabled_features')) else []
+                    # 現在の設定を読み込み（カンマ区切り文字列をリストに変換）
+                    raw_features = s_info.get('enabled_features', "")
+                    current_features = str(raw_features).split(",") if pd.notna(raw_features) and raw_features != "" else []
                     
                     all_features = [
                         "確定シフト閲覧",
@@ -964,45 +965,49 @@ if st.session_state.is_global_admin:
                         "レジ締め作業"
                     ]
                     
-                    e_features = {}
-                    for feature in all_features:
-                        # 既存の設定があればそれを使い、なければTrue
+                    selected_feature_list = []
+                    cols = st.columns(2)
+                    for idx, feature in enumerate(all_features):
+                        # 設定が空の場合は全機能ON、設定がある場合は含まれているものだけON
                         default_val = feature in current_features if current_features else True
-                        e_features[feature] = st.checkbox(feature, value=default_val, key=f"edit_feature_{target_id}_{feature}")
+                        with cols[idx % 2]:
+                            if st.checkbox(feature, value=default_val, key=f"edit_feat_{feature}"):
+                                selected_feature_list.append(feature)
                     
-                    e_enabled_features = ",".join([f for f, enabled in e_features.items() if enabled])
+                    # 保存用にカンマ区切りの文字列にする
+                    e_enabled_features = ",".join(selected_feature_list)
 
                     if st.form_submit_button("設定を更新して保存"):
                         # 1. 既存データをコピー
                         df_to_save = df_stores.copy()
                         
-                        # 2. 【最重要】全ての列を一旦「オブジェクト型（なんでも入る型）」に変換
-                        # これをしないと、数値列に文字列を書き込む際に今回のようなエラーが出ます
+                        # 2. 型エラー防止
                         df_to_save = df_to_save.astype(object)
 
-                        # 3. 更新する列のリスト
+                        # 3. 更新する列のリスト（enabled_featuresを追加）
                         update_columns = [
                             'store_name', 'sheet_url', 'admin_pw', 'open_time', 'close_time', 
                             'group_list', 'skill1_name', 'skill2_name', 'target_rate',
-                            'idle1_s', 'idle1_e', 'idle2_s', 'idle2_e', 'idle3_s', 'idle3_e'
+                            'idle1_s', 'idle1_e', 'idle2_s', 'idle2_e', 'idle3_s', 'idle3_e',
+                            'enabled_features'
                         ]
                         
-                        # 4. 更新する値のリスト（各値を確実に正しい型に変換）
+                        # 4. 更新する値のリスト（e_enabled_featuresを追加）
                         update_values = [
                             str(e_name), str(e_url), str(e_pw), str(e_open), str(e_close), 
                             str(e_groups), str(e_s1), str(e_s2), float(e_rate),
-                            str(e_i1s), str(e_i1e), str(e_i2s), str(e_i2e), str(e_i3s), str(e_i3e)
+                            str(e_i1s), str(e_i1e), str(e_i2s), str(e_i2e), str(e_i3s), str(e_i3e),
+                            str(e_enabled_features)
                         ]
                         
                         # 5. 値の代入実行
                         df_to_save.loc[df_to_save['store_id'] == target_id, update_columns] = update_values
                         
-                        # 6. 保存実行（indexをstore_idに戻して保存）
+                        # 6. 保存実行
                         if save_sheet_robust(df_to_save.set_index("store_id"), "stores", target_url=MASTER_DATABASE_URL):
                             st.cache_data.clear()
-                            st.success("店舗設定を更新しました！")
+                            st.success("✅ 店舗設定と表示機能を更新しました！")
                             st.rerun()
-
     # ==========================================
     # 機能の表示設定タブ（一括管理用）
     # ==========================================
