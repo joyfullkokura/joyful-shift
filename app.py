@@ -973,29 +973,32 @@ if st.session_state.is_global_admin:
                     e_enabled_features = ",".join([f for f, enabled in e_features.items() if enabled])
 
                     if st.form_submit_button("設定を更新して保存"):
+                        # 1. 既存データをコピー
                         df_to_save = df_stores.copy()
                         
+                        # 2. 【最重要】全ての列を一旦「オブジェクト型（なんでも入る型）」に変換
+                        # これをしないと、数値列に文字列を書き込む際に今回のようなエラーが出ます
+                        df_to_save = df_to_save.astype(object)
+
+                        # 3. 更新する列のリスト
                         update_columns = [
                             'store_name', 'sheet_url', 'admin_pw', 'open_time', 'close_time', 
                             'group_list', 'skill1_name', 'skill2_name', 'target_rate',
-                            'idle1_s', 'idle1_e', 'idle2_s', 'idle2_e', 'idle3_s', 'idle3_e',
-                            'enabled_features'
+                            'idle1_s', 'idle1_e', 'idle2_s', 'idle2_e', 'idle3_s', 'idle3_e'
                         ]
                         
+                        # 4. 更新する値のリスト（各値を確実に正しい型に変換）
                         update_values = [
-                            e_name, e_url, e_pw, e_open, e_close, 
-                            e_groups, e_s1, e_s2, e_rate,
-                            e_i1s, e_i1e, e_i2s, e_i2e, e_i3s, e_i3e,
-                            e_enabled_features
+                            str(e_name), str(e_url), str(e_pw), str(e_open), str(e_close), 
+                            str(e_groups), str(e_s1), str(e_s2), float(e_rate),
+                            str(e_i1s), str(e_i1e), str(e_i2s), str(e_i2e), str(e_i3s), str(e_i3e)
                         ]
                         
+                        # 5. 値の代入実行
                         df_to_save.loc[df_to_save['store_id'] == target_id, update_columns] = update_values
                         
-                        # ★★★ store_idをインデックスに設定してから保存 ★★★
-                        df_to_save = df_to_save.set_index("store_id")
-                        df_to_save.index.name = "store_id"
-                        
-                        if save_sheet_robust(df_to_save, "stores", target_url=MASTER_DATABASE_URL):
+                        # 6. 保存実行（indexをstore_idに戻して保存）
+                        if save_sheet_robust(df_to_save.set_index("store_id"), "stores", target_url=MASTER_DATABASE_URL):
                             st.cache_data.clear()
                             st.success("店舗設定を更新しました！")
                             st.rerun()
