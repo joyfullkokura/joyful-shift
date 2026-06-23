@@ -2162,15 +2162,27 @@ elif mode == "シフト自動生成（案）":
                     
                     scores[name] = unmet_score + rarity_score - penalty + random.uniform(0, 10)
 
-                # --- get_priority_poolの定義（変更なしでOKですが、念のため再掲） ---
+# --- get_priority_poolの定義（週0の人を完全に除外する修正版） ---
                 def get_priority_pool(group_name, filter_skill=None):
                     pool = []
                     for _, row in master_df.iterrows():
                         name = str(row["名前"]).strip()
-                        if req_load.at[name, col] or name in assigned_today: continue
+                        
+                        # 【最重要】目標出勤日数が 0 の人は、候補リストにすら入れない
+                        if staff_goals.get(name, 0) == 0:
+                            continue
+                            
+                        # 休み希望、または本日すでに1枠入っている人はスキップ
+                        if req_load.at[name, col] or name in assigned_today:
+                            continue
+                        
+                        # グループ判定（該当グループ、または全対応のWグループ）
                         if row["グループ"] == group_name or row["グループ"] == "W":
-                            if filter_skill and not row[filter_skill]: continue
-                            # すでに計算されたスコアを使ってリストを作成
+                            # スキル判定（デザートやレジ締めが必要な場合）
+                            if filter_skill and not row.get(filter_skill, False):
+                                continue
+                                
+                            # ここまで残った人だけを候補者とする
                             pool.append({"名前": name, "スコア": scores.get(name, -999)})
                     
                     # スコアが高い順に並び替え
