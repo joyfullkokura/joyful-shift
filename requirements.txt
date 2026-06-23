@@ -4,3 +4,4 @@ xlsxwriter
 st-gsheets-connection
 openpyxl
 jpholiday
+google-api-python-client
