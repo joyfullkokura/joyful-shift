@@ -2141,28 +2141,41 @@ elif mode == "シフト自動生成（案）":
                     continue
 
                 # (スコア計算と割り当てロジックは既存通り...)
-                # scoresの計算、get_priority_poolの定義
+# --- scoresの計算（0日設定対応版） ---
                 scores = {}
                 for name in ALL_NAMES:
-                    goal = staff_goals.get(name, 10)
-                    progress_ratio = cumulative_counts[name] / goal
-                    unmet_score = (1.0 - progress_ratio) * 100
+                    # 目標出勤日数を取得（デフォルト0にする）
+                    goal = staff_goals.get(name, 0)
+                    
+                    if goal > 0:
+                        # 通常の計算
+                        progress_ratio = cumulative_counts[name] / goal
+                        unmet_score = (1.0 - progress_ratio) * 100
+                    else:
+                        # 目標が0日の場合、優先度を大幅に下げる
+                        # これにより、他に人がいない時だけ選ばれるようになります
+                        unmet_score = -500 
+
                     rarity_score = off_req_counts.get(name, 0) * 3
                     cons = consecutive_days[name]
                     penalty = 10 if cons==1 else 30 if cons==2 else 60 if cons==3 else 150 if cons>=4 else 0
+                    
                     scores[name] = unmet_score + rarity_score - penalty + random.uniform(0, 10)
 
+                # --- get_priority_poolの定義（変更なしでOKですが、念のため再掲） ---
                 def get_priority_pool(group_name, filter_skill=None):
                     pool = []
                     for _, row in master_df.iterrows():
-                        name = row["名前"]
+                        name = str(row["名前"]).strip()
                         if req_load.at[name, col] or name in assigned_today: continue
                         if row["グループ"] == group_name or row["グループ"] == "W":
                             if filter_skill and not row[filter_skill]: continue
-                            pool.append({"名前": name, "スコア": scores[name]})
+                            # すでに計算されたスコアを使ってリストを作成
+                            pool.append({"名前": name, "スコア": scores.get(name, -999)})
+                    
+                    # スコアが高い順に並び替え
                     pool.sort(key=lambda x: x["スコア"], reverse=True)
                     return [p["名前"] for p in pool]
-
 # 割り当て
                 for g_code, p_name, key in [("HD","H昼","hd"),("KD","K昼","kd"),("HN","H夜","hn"),("KN","K夜","kn")]:
                     skill = "デザート" if g_code=="HD" else "レジ締め" if g_code=="HN" else None
