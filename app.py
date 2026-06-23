@@ -1178,7 +1178,7 @@ if mode == "従業員名簿管理":
                 ),
                 "週希望": st.column_config.NumberColumn(
                     "週希望", 
-                    min_value=1, 
+                    min_value=0, 
                     max_value=7, 
                     step=1, 
                     default=3,
@@ -2040,7 +2040,7 @@ elif mode == "シフト自動生成（案）":
             # 3. True/Falseの判定
             req_load = req_load.map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0", "TRUE.0", "YES"])
         off_req_counts = req_load.sum(axis=1).to_dict()
-# --- 1. 目標出勤日数の計算（最強の安全版） ---
+# --- 1. 目標出勤日数の計算（0日設定対応版） ---
         num_weeks = num_days / 7.0
         
         # 貯金箱から目標率を取得し、万が一空なら0.7にする
@@ -2055,20 +2055,22 @@ elif mode == "シフト自動生成（案）":
             if not s_name or s_name == "nan":
                 continue
                 
-            # 週希望を数値化（空なら3にする）
+            # 週希望を数値化（空または0なら0にする）
             v_req = pd.to_numeric(row.get("週希望"), errors='coerce')
             if pd.isna(v_req):
-                v_req = 3.0
+                v_req = 0.0 # 0を許可
             
             # --- 計算の実行 ---
             raw_calc = v_req * num_weeks * t_rate
             
-            # 【核心】計算結果が NaN になっていないか最終チェック
-            if pd.isna(raw_calc):
-                staff_goals[s_name] = 1 # 最悪でも1日
+            # 【修正点】0日を許可するため max(0, ...) に変更
+            if pd.isna(raw_calc) or v_req == 0:
+                staff_goals[s_name] = 0
             else:
-                # 正常な場合のみ int に変換
-                staff_goals[s_name] = max(1, int(raw_calc))
+                # 週希望が1日以上ある場合は、切り捨てで0にならないよう最低1日とするか、
+                # 完全に計算に任せるなら int(raw_calc) のみにします。
+                # ここでは「週希望があるなら最低1日」を維持しつつ、0の場合は0を通します。
+                staff_goals[s_name] = max(0, int(raw_calc))
 
         # --- 2. シフト生成の試行ループ（ここから下は同様） ---
         for trial_idx in range(NUM_TRIALS):
@@ -2986,7 +2988,7 @@ elif mode == "シフト自動生成（案）":
             fmt_total = workbook.add_format({
                 'bold': True, 'top': 2, 'bottom': 2, 'left': 1, 'right': 1,
                 'bg_color': '#FFFFCC', 'align': 'center', 'valign': 'vcenter',
-                'num_format': '0.00', 'size': 14, 'font_name': 'Meiryo UI'
+                'num_format': '0.00', 'size': 13, 'font_name': 'Meiryo UI'
             })
         
             fmt_sat = workbook.add_format({
