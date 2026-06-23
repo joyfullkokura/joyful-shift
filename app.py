@@ -1141,14 +1141,12 @@ else:
 if mode == "従業員名簿管理":
     st.title("👥 従業員名簿管理")
     
-    # ★ パスワード認証チェック
     is_admin = (str(pw).strip() == st.session_state.admin_pw_fixed)
     
     if is_admin:
-        # ========== 管理者モード ==========
         st.success("✅ 管理者モードで編集可能です")
         
-        # お知らせの編集
+        # --- お知らせの編集 ---
         with st.expander("📢 お知らせの編集", expanded=False):
             new_notice = st.text_area(
                 "スタッフ全員に表示するメッセージを入力してください", 
@@ -1157,57 +1155,55 @@ if mode == "従業員名簿管理":
             )
             if st.button("📢 お知らせを更新する", use_container_width=True):
                 updated_notice_df = pd.DataFrame([[new_notice]], columns=["message"])
-                if save_config_data(updated_notice_df, "config"):
-                    st.success("お知らせを更新しました！全員の画面に反映されます。")
+                if save_sheet_robust(updated_notice_df, "config"): # 関数名は環境に合わせて調整してください
+                    st.success("お知らせを更新しました！")
                     st.rerun()
         
-        # グループ一覧
         st.caption(f"現在の登録グループ： 【{' / '.join(st.session_state.group_options)}】")
-        
-        # 名簿エディタ
-        st.subheader("📝 名簿の編集")
-        edited_df = st.data_editor(
-            master_df,
-            column_config={
-                "名前": st.column_config.TextColumn("名前", required=True, width="medium"),
-                "グループ": st.column_config.SelectboxColumn(
-                    "グループ", 
-                    options=st.session_state.group_options,
-                    required=True,
-                    width="small"
-                ),
-                "週希望": st.column_config.NumberColumn(
-                    "週希望", 
-                    min_value=0, 
-                    max_value=7, 
-                    step=1, 
-                    default=3,
-                    width="small",
-                    help="1週間の希望出勤日数（自動生成の上限になります）"
-                ),
-                st.session_state.skill1_name: st.column_config.CheckboxColumn(
-                    st.session_state.skill1_name,
-                    width="small",
-                    help=f"{st.session_state.skill1_name}ができるスタッフ"
-                ),
-                st.session_state.skill2_name: st.column_config.CheckboxColumn(
-                    st.session_state.skill2_name,
-                    width="small",
-                    help=f"{st.session_state.skill2_name}ができるスタッフ"
-                ),
-            },
-            column_order=["名前", "グループ", "週希望", st.session_state.skill1_name, st.session_state.skill2_name],
-            use_container_width=True,
-            num_rows="dynamic",
-            height=500,
-            key="master_editor"
-        )
-        
-        col_save, col_info = st.columns([1, 3])
-        with col_save:
-            if st.button("💾 名簿を保存する", use_container_width=True, type="primary"):
-                if save_master(edited_df):
-                    st.success("✅ 保存しました！")
+
+        # --- ★重要：名簿編集をフォームで囲む ---
+        # これにより、保存ボタンを押すまで「カクつき（再計算）」が発生しなくなります
+        with st.form("master_edit_form"):
+            st.subheader("📝 名簿の編集")
+            st.info("💡 編集が終わったら、一番下の「💾 名簿を確定して保存」を押してください。")
+            
+            edited_df = st.data_editor(
+                master_df,
+                column_config={
+                    "名前": st.column_config.TextColumn("名前", required=True, width="medium"),
+                    "グループ": st.column_config.SelectboxColumn(
+                        "グループ", 
+                        options=st.session_state.group_options,
+                        required=True,
+                        width="small"
+                    ),
+                    "週希望": st.column_config.NumberColumn(
+                        "週希望", 
+                        min_value=0, max_value=7, step=1, default=3,
+                        width="small"
+                    ),
+                    st.session_state.skill1_name: st.column_config.CheckboxColumn(st.session_state.skill1_name, width="small"),
+                    st.session_state.skill2_name: st.column_config.CheckboxColumn(st.session_state.skill2_name, width="small"),
+                },
+                column_order=["名前", "グループ", "週希望", st.session_state.skill1_name, st.session_state.skill2_name],
+                use_container_width=True,
+                num_rows="dynamic",
+                height=500,
+                hide_index=True, # 左側の数字を非表示
+                key="master_editor_in_form"
+            )
+            
+            # フォーム専用の送信ボタン
+            submit_save = st.form_submit_button("💾 名簿を確定して保存する", use_container_width=True, type="primary")
+            
+            if submit_save:
+                # 名前が空の行を削除するガードレール
+                clean_df = edited_df.dropna(subset=["名前"])
+                if save_master(clean_df):
+                    st.success("✅ 名簿をスプレッドシートに保存しました！")
+                    # キャッシュをクリアして確実に最新を読み込む
+                    st.cache_data.clear()
+                    time.sleep(1)
                     st.rerun()
         
         # ========== 取扱説明書（管理者用） ==========
@@ -3146,27 +3142,40 @@ elif mode == "シフト自動生成（案）":
                 worksheet.merge_range(base_row, break_col, base_row + 3, break_col,
                                       f"=SUM({col_start}{r4}:{col_end}{r4})", fmt_total)
 
-                # --- ★★★ 充足率の【動的】計算と書き込み ★★★ ---
-                # 1. 本人の「週希望」から「今月の目標出勤日数」を計算（定数として埋め込む）
-                weekly_pref = 3 
+# --- ★★★ 充足率の【動的】計算と書き込み（週0・新人対応版） ★★★ ---
+                # 1. 本人の「週希望」を取得（0を正しく0として扱う）
+                weekly_pref = 3.0 
                 if not master_df.empty:
                     match = master_df[master_df["名前"] == name]
                     if not match.empty:
-                        weekly_pref = pd.to_numeric(match.iloc[0]["週希望"], errors='coerce') or 3
+                        val = pd.to_numeric(match.iloc[0]["週希望"], errors='coerce')
+                        # NaN（空欄）のときだけデフォルトの3にする。0はそのまま0として使う。
+                        weekly_pref = val if not pd.isna(val) else 3.0
                 
                 target_days = (weekly_pref / 7) * num_dates
                 
                 # 2. Excel数式の作成
-                # 仕組み：3行目（実働）が0より大きい日をCOUNTIFで数え、目標日数で割る
-                # 範囲は 3行目(r3) の 1日〜末日まで
-                actual_days_formula = f'COUNTIF({col_start}{r3}:{col_end}{r3},">0")'
-                dynamic_fulfillment_formula = f"={actual_days_formula}/{target_days}"
+                col_start = col_letter(date_start)
+                col_end = col_letter(date_start + num_dates - 1)
+                # 3行目（実働）が0より大きい日をカウントする数式パーツ
+                actual_days_f = f'COUNTIF({col_start}{r3}:{col_end}{r3},">0")'
+
+                if target_days == 0:
+                    # 【週希望0の人（新人）の場合】
+                    # 出勤が1日でもあれば「研修(○日)」、0日なら「-」と表示する
+                    # & を使って文字を結合するExcel数式にします
+                    dynamic_fulfillment_formula = f'=IF({actual_days_f}>0, "("&{actual_days_f}&"日)", "-")'
+                    # 新人は％ではないので、％がつかない書式（fmt_merge等）を使います
+                    current_fmt = fmt_merge 
+                else:
+                    # 【通常スタッフの場合】
+                    # 以前と同じ 実際の出勤数 / 目標日数
+                    dynamic_fulfillment_formula = f"={actual_days_f}/{target_days}"
+                    current_fmt = fmt_pct
 
                 # 3. 4行マージセルに数式を書き込み
                 worksheet.merge_range(base_row, fulfillment_col, base_row + 3, fulfillment_col, 
-                                      dynamic_fulfillment_formula, fmt_pct)
-
-            worksheet.freeze_panes(header_row + 1, 2)
+                                      dynamic_fulfillment_formula, current_fmt)
 # --- 10. 最終行：日別合計（総人時）の計算 ---
             total_row_idx = header_row + 1 + len(export_df)
             worksheet.set_row(total_row_idx, 25)
