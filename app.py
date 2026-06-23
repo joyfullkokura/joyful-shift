@@ -12,6 +12,34 @@ import streamlit.components.v1 as components  # 追加
 import requests
 import json
 import jpholiday
+def send_line_file(file_url, file_name):
+    """LINE Messaging APIを使ってファイルを送信する"""
+    LINE_ACCESS_TOKEN = "あなたのトークン"
+    LINE_DESTINATION_ID = "送信先のID"
+    
+    url = "https://api.line.me/v2/bot/message/push"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {LINE_ACCESS_TOKEN}"
+    }
+    
+    # LINEのファイルメッセージ形式
+    data = {
+        "to": LINE_DESTINATION_ID,
+        "messages": [
+            {
+                "type": "file",
+                "fileName": file_name,
+                "fileContentUrl": file_url
+            }
+        ]
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, data=json.dumps(data))
+        return response.status_code == 200
+    except Exception:
+        return False
 def save_config_data(df, worksheet_name="config"):
     """設定シート専用の保存関数（store_idチェックなし）"""
     return save_sheet_robust(df, worksheet_name, target_url=SPREADSHEET_URL)
@@ -4231,10 +4259,10 @@ if mode == "シフトアップロード":
             1. 「シフト自動生成」で作成したExcelをダウンロードし、店長のPCで修正・保存します。
             2. 公開したい「年」と「月」を選択します。
             3. 修正したExcelファイルをここにドラッグ＆ドロップします。
-            4. 「確定シフトを公開する」を押すと、スタッフ全員のスマホから閲覧可能になり、LINE通知が飛びます。
+            4. プレビューで内容を確認し、「確定シフトを公開する」をクリックします。
             """)
 
-        # --- 1. アップロード先の年月を選択 ---
+        # --- 1. アップロード先の年月とシート名を定義 ---
         col_up1, col_up2 = st.columns(2)
         today_up = get_japan_today()
         with col_up1:
@@ -4242,173 +4270,119 @@ if mode == "シフトアップロード":
         with col_up2:
             up_target_month = st.selectbox("アップロード先の月", range(1, 13), index=today_up.month - 1)
 
+        # ★ 保存先シート名をここで確実に定義
+        target_sheet = f"shift_{up_target_year}_{up_target_month:02}"
+
         up_file = st.file_uploader("修正済みExcelファイル(xlsx)を選択してください", type="xlsx")
         
         if up_file:
-            # Excelを読み込む
-            f_df = pd.read_excel(up_file, sheet_name=0, header=None)  # ★ ヘッダーなしで読み込み
+            # Excelを読み込む（ヘッダーなしで全体を読み込む）
+            f_df_raw = pd.read_excel(up_file, sheet_name=0, header=None)
             
-            st.write("▼ アップロード内容のプレビュー（先頭6行）")
-            st.dataframe(f_df.head(6), use_container_width=True)
-            
-            # ★★★ タイトル行・ヘッダー行を自動検出して除去 ★★★
-            # 1行目はタイトル（"○年○月" を含む）
-            # 2行目は空行
-            # 3行目がヘッダー（"G", "名前" などを含む）
-            
-            header_row_idx = None
-            for idx, row in f_df.iterrows():
-                first_cell = str(row.iloc[0]).strip()
-                second_cell = str(row.iloc[1]).strip() if len(row) > 1 else ""
-                
-                # "G" と "名前" が含まれる行をヘッダーとして検出
-                if first_cell == "G" and ("名前" in second_cell or second_cell == "名前"):
-                    header_row_idx = idx
-                    break
-                # または "グループ" と "名前" の組み合わせ
-                if "グループ" in first_cell or "名前" in second_cell:
+            # --- 2. ヘッダー行の自動検出 ---
+            header_row_idx = 0
+            for idx, row in f_df_raw.iterrows():
+                row_str = "".join([str(x) for x in row.values])
+                if "名前" in row_str and "G" in row_str:
                     header_row_idx = idx
                     break
             
-            if header_row_idx is not None:
-                # ヘッダー行より前の行（タイトル行など）を削除
-                f_df = f_df.iloc[header_row_idx:].reset_index(drop=True)
-                # ヘッダー行を列名に設定
-                f_df.columns = f_df.iloc[0]
-                f_df = f_df.iloc[1:].reset_index(drop=True)
-                
-                st.success(f"✅ ヘッダー行を検出しました（{header_row_idx + 1}行目）")
-            else:
-                st.warning("ヘッダー行が見つかりませんでした。先頭行を列名として使用します。")
-                f_df.columns = f_df.iloc[0]
-                f_df = f_df.iloc[1:].reset_index(drop=True)
+            # ヘッダーを適用してデータを切り出す
+            f_df = f_df_raw.iloc[header_row_idx:].reset_index(drop=True)
+            f_df.columns = [str(c).strip() for c in f_df.iloc[0]]
+            f_df = f_df.iloc[1:].reset_index(drop=True)
+
+            # --- 3. データのクレンジング (f_cleanの作成) ---
+            # 不要な空行やヘッダー文字が含まれる行を除去
+            ignore_list = ["名前", "グループ", "合計実働", "休憩合計", "G", "nan", "None"]
+            # 1列目か2列目に名前があるはずなので、そこを基準に掃除
+            name_col_name = f_df.columns[1] if len(f_df.columns) > 1 else f_df.columns[0]
+            f_clean = f_df[~f_df[name_col_name].astype(str).str.contains("|".join(ignore_list), na=False)].copy()
             
-            # 列名を文字列に統一
-            f_df.columns = [str(c).strip() for c in f_df.columns]
+            # 列名の重複を防ぐ（Pandasエラー対策）
+            new_cols = []
+            c_counts = {}
+            for c in f_clean.columns:
+                c_s = str(c)
+                if c_s in c_counts:
+                    c_counts[c_s] += 1
+                    new_cols.append(f"{c_s}_{c_counts[c_s]}")
+                else:
+                    c_counts[c_s] = 0
+                    new_cols.append(c_s)
+            f_clean.columns = new_cols
+
+            st.success(f"✅ ファイルを読み込みました。対象：{target_sheet}")
+            st.write("▼ 公開内容のプレビュー（先頭4名分）")
+            st.dataframe(f_clean.head(8), use_container_width=True) # 2行1セットなので8行
             
-            st.write("▼ クレンジング後のプレビュー")
-            st.dataframe(f_df.head(6), use_container_width=True)
-            
-            # ★★★ 日付列の検出と整形 ★★★
-            # グループ列と名前列を特定
-            group_col = None
-            name_col = None
-            
-            for i, col in enumerate(f_df.columns):
-                col_str = str(col).strip()
-                if col_str in ["G", "グループ", "group"]:
-                    group_col = col
-                elif col_str in ["名前", "name", "Name"]:
-                    name_col = col
-            
-            # 見つからない場合は最初の2列を使用
-            if group_col is None:
-                group_col = f_df.columns[0]
-                st.info(f"グループ列が見つからないため、'{group_col}' 列を使用します")
-            if name_col is None:
-                name_col = f_df.columns[1] if len(f_df.columns) > 1 else f_df.columns[0]
-                st.info(f"名前列が見つからないため、'{name_col}' 列を使用します")
-            
-            # 日付列を特定（カッコを含む列、または数字のみの列）
-            date_cols = []
-            for col in f_df.columns:
-                col_str = str(col).strip()
-                # 「1(月)」や「1日(月)」などのパターン
-                if "(" in col_str and ")" in col_str:
-                    date_cols.append(col)
-                # 「合計実働」「休憩合計」「欠員」などの集計列は除外
-                elif col_str in ["合計実働", "休憩合計", "欠員メッセージ", "G", "名前", "グループ"]:
-                    continue
-            
-            # 日付列が見つからない場合は、3列目以降を日付列とみなす
-            if not date_cols:
-                skip_cols = [group_col, name_col, "合計実働", "休憩合計", "欠員メッセージ"]
-                date_cols = [c for c in f_df.columns if c not in skip_cols]
-                st.info(f"日付列を自動判定しました: {len(date_cols)}列")
-            
-            st.write(f"🔍 検出: グループ列='{group_col}', 名前列='{name_col}', 日付列={len(date_cols)}列")
-            
+            # --- 4. 保存実行ボタン ---
             if st.button(f"🚀 {up_target_year}年{up_target_month}月の確定シフトを公開する", use_container_width=True):
-                with st.spinner("労働時間を再計算して公開中..."):
+                with st.spinner("労働時間を再計算してスプレッドシートを更新中..."):
                     try:
-                        # 必要な列だけを抽出
-                        keep_cols = [group_col, name_col] + date_cols
-                        # 合計実働・休憩合計があれば保持
-                        if "合計実働" in f_df.columns:
-                            keep_cols.append("合計実働")
-                        if "休憩合計" in f_df.columns:
-                            keep_cols.append("休憩合計")
+                        # 2行1セットでの時間再計算（合計実働・休憩合計の列を更新）
+                        # ※calc_work_and_break は既存の関数を使用
+                        date_cols = [c for c in f_clean.columns if "(" in str(c) or str(c).isdigit()]
                         
-                        f_clean = f_df[keep_cols].copy()
-                        
-                        # ゴミ行の除去
-                        ignore_keywords = ["名前", "グループ", "合計実働", "休憩合計", "G", "index"]
-                        if name_col in f_clean.columns:
-                            f_clean = f_clean[~f_clean[name_col].astype(str).str.contains("|".join(ignore_keywords), na=False)]
-                        
-                        f_clean = f_clean.reset_index(drop=True)
-                        
-                        # ★★★ 2行1セットで休憩を正しく計算 ★★★
-                        nets, brks = [], []
+                        final_nets = []
+                        final_brks = []
                         
                         for i in range(0, len(f_clean), 2):
-                            row1_net, row1_brk = 0.0, 0.0
-                            row2_net, row2_brk = 0.0, 0.0
+                            row1_h, row1_b = 0.0, 0.0
+                            row2_h, row2_b = 0.0, 0.0
                             
                             for c in date_cols:
-                                val1 = str(f_clean.iloc[i][c]).strip() if i < len(f_clean) else ""
-                                val2 = ""
-                                if i + 1 < len(f_clean):
-                                    val2 = str(f_clean.iloc[i+1][c]).strip()
+                                v1 = str(f_clean.iloc[i][c])
+                                v2 = str(f_clean.iloc[i+1][c]) if i+1 < len(f_clean) else ""
                                 
-                                # 2行合算で休憩を計算
-                                n1, b1, n2, b2 = calc_work_and_break_for_pair(val1, val2)
-                                row1_net += n1
-                                row1_brk += b1
-                                row2_net += n2
-                                row2_brk += b2
+                                # 2行合算で計算
+                                def get_h(v):
+                                    if "-" not in str(v): return 0.0
+                                    try:
+                                        s, e = str(v).split("-")
+                                        diff = time_to_float(e) - time_to_float(s)
+                                        return diff if diff > 0 else diff + 24
+                                    except: return 0.0
+                                
+                                total_raw = get_h(v1) + get_h(v2)
+                                brk = 1.0 if total_raw > 8.001 else (0.75 if total_raw > 6.001 else 0.0)
+                                
+                                # 実働を1行目、休憩を2行目の見えない場所に集計（表示ロジックに合わせる）
+                                row1_h += (total_raw - brk)
+                                row1_b += brk
                             
-                            nets.append(round(row1_net, 1))
-                            brks.append(round(row1_brk, 2))
-                            if i + 1 < len(f_clean):
-                                nets.append(round(row2_net, 1))
-                                brks.append(round(row2_brk, 2))
+                            final_nets.extend([round(row1_h, 1), 0.0]) # 2行目は0
+                            final_brks.extend([round(row1_b, 1), 0.0])
+
+                        # データの更新
+                        f_clean["合計実働"] = final_nets[:len(f_clean)]
+                        f_clean["休憩合計"] = final_brks[:len(f_clean)]
                         
-                        # 長さを揃える
-                        while len(nets) < len(f_clean):
-                            nets.append(0.0)
-                            brks.append(0.0)
+                        # 1列目をインデックスにして保存
+                        save_df = f_clean.set_index(f_clean.columns[0])
                         
-                        f_clean["合計実働"] = nets[:len(f_clean)]
-                        f_clean["休憩合計"] = brks[:len(f_clean)]
-                        
-                        # 名前列をインデックスに設定
-                        f_clean = f_clean.set_index(name_col)
-                        
-                        # 店舗専用のスプレッドシートへ保存
-                        target_sheet = f"shift_{up_target_year}_{up_target_month:02}"
-                        
-                        if save_sheet_robust(f_clean, target_sheet):
+                        if save_sheet_robust(save_df, target_sheet):
                             st.cache_data.clear()
                             
-                            # LINE通知
-                            store_name = st.session_state.store_name
+                            # --- 5. LINE通知 ---
                             line_msg = (
-                                f"📢 {store_name}\nシフト公開のお知らせ\n\n"
-                                f"{up_target_year}年{up_target_month}月の確定シフトが公開されました！\n"
-                                f"各自、アプリから確認をお願いします。✨\n\n"
-                                f"URL: https://joyful-shift.streamlit.app/?s={url_store_id if url_store_id else 'KOKURA'}"
+                                f"📢 {st.session_state.store_name}\n"
+                                f"確定シフトが公開されました！✨\n\n"
+                                f"対象：{up_target_year}年{up_target_month}月分\n\n"
+                                f"各自、アプリから確認をお願いします！\n"
+                                f"URL: https://joyful-shift-jf9lwlpz2kpjovgwspgkcq.streamlit.app/?s={url_store_id if url_store_id else 'KOKURA'}"
                             )
                             
                             if send_line_notification(line_msg):
-                                st.success(f"✅ {target_sheet} を公開し、スタッフにLINE通知を送りました！")
+                                st.success(f"✅ {target_sheet} を公開し、LINE通知を送りました！")
                             else:
-                                st.warning(f"✅ {target_sheet} は公開されましたが、LINE通知に失敗しました。")
+                                st.warning(f"✅ {target_sheet} は公開されました。")
                             
-                            time.sleep(2)
+                            time.sleep(1)
                             st.rerun()
+                            
                     except Exception as e:
-                        st.error(f"エラーが発生しました。Excelの形式が正しいか確認してください。\n詳細: {e}")
+                        st.error(f"保存に失敗しました。詳細: {e}")
 if mode == "レジ締め作業":
     st.title("💰 レジ締め作業")
 
