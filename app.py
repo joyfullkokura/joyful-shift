@@ -1088,59 +1088,56 @@ if st.session_state.is_global_admin:
     st.stop() # 管理者はここで終了。下の店舗用コードは実行させない。
 
 # ==========================================
-# 3. ここから下は「店舗用」の既存コード（インデント不要）
+# 3. 店舗用メインメニュー
 # ==========================================
 SPREADSHEET_URL = st.session_state.spreadsheet_url
 TIME_OPTIONS = st.session_state.store_time_options
-
-# 以降のすべての機能で使うURLを決定
-SPREADSHEET_URL = st.session_state.spreadsheet_url
-# サイドバーの radio ボタンを更新（既存のコードを置き換え）
 st.sidebar.title("メニュー")
 
-# ★ 店舗設定から有効な機能を取得
+# --- 1. 機能の定義とURL用IDの紐付け ---
+# name: if mode == "..." で使う内部名
+# label: サイドバーに表示する名前
+# id: URLパラメータ (?m=...) で使う短い名前
+all_modes_config = [
+    {"name": "確定シフト閲覧", "label": "📊 確定シフト閲覧", "id": "view"},
+    {"name": "休み希望入力", "label": "📅 休み希望入力", "id": "off"},
+    {"name": "清掃記録", "label": "🧹 清掃記録", "id": "clean"},
+    {"name": "従業員名簿管理", "label": "👥 従業員名簿管理", "id": "staff"},
+    {"name": "シフト自動生成（案）", "label": "🤖 シフト自動生成（案）", "id": "gen"},
+    {"name": "シフトアップロード", "label": "📤 シフトアップロード", "id": "up"},
+    {"name": "レジ締め作業", "label": "💰 レジ締め作業", "id": "reg"},
+]
+
+# --- 2. 有効な機能のフィルタリング（修正版） ---
 enabled_features_str = st.session_state.get('enabled_features', '')
 if enabled_features_str:
-    enabled_features = enabled_features_str.split(",")
+    # カンマで切った後、前後のスペースを消す処理を追加
+    enabled_names = [n.strip() for n in enabled_features_str.split(",")]
+    available_modes = [m for m in all_modes_config if m["name"] in enabled_names]
 else:
-    # 設定がない場合は全機能を表示（後方互換性）
-    enabled_features = [
-        "確定シフト閲覧",
-        "休み希望入力", 
-        "清掃記録",
-        "従業員名簿管理",
-        "シフト自動生成（案）",
-        "シフトアップロード",
-        "レジ締め作業"
-    ]
+    available_modes = all_modes_config
 
-# 利用可能な全機能の定義
-all_available_modes = {
-    "確定シフト閲覧": "📊 確定シフト閲覧",
-    "休み希望入力": "📅 休み希望入力",
-    "清掃記録": "🧹 清掃記録",
-    "従業員名簿管理": "👥 従業員名簿管理",
-    "シフト自動生成（案）": "🤖 シフト自動生成（案）",
-    "シフトアップロード": "📤 シフトアップロード",
-    "レジ締め作業": "💰 レジ締め作業"
-}
+# --- 3. URLパラメータによる初期選択モードの特定 ---
+# 例: &m=off なら「休み希望入力」を選択状態にする
+url_m = st.query_params.get("m", "")
+default_index = 0
 
-# 有効な機能のみをメニューに表示
-available_modes = {k: v for k, v in all_available_modes.items() if k in enabled_features}
+for i, m in enumerate(available_modes):
+    if m["id"] == url_m:
+        default_index = i
+        break
 
-# デフォルトで最初の有効な機能を選択
-default_mode = list(available_modes.values())[0] if available_modes else "確定シフト閲覧"
-
-mode = st.sidebar.radio(
+# --- 4. サイドバー表示 ---
+selected_label = st.sidebar.radio(
     "機能を選択", 
-    list(available_modes.values()),
-    index=0
+    [m["label"] for m in available_modes],
+    index=default_index
 )
 
-# 表示名から内部名に変換
-mode_map_reverse = {v: k for k, v in available_modes.items()}
-mode = mode_map_reverse.get(mode, "確定シフト閲覧")
+# 選択されたラベルから内部名(mode)を取得
+mode = next(m["name"] for m in available_modes if m["label"] == selected_label)
 
+# 管理者パスワード
 pw = st.sidebar.text_input("管理者パスワード", type="password")
 
 # --- お知らせ読み込み（決定版） ---
@@ -3178,40 +3175,56 @@ elif mode == "シフト自動生成（案）":
                 worksheet.merge_range(base_row, break_col, base_row + 3, break_col,
                                       f"=SUM({col_start}{r4}:{col_end}{r4})", fmt_total)
 
-# --- ★★★ 充足率の【動的】計算と書き込み（週0・新人対応版） ★★★ ---
-                # 1. 本人の「週希望」を取得（0を正しく0として扱う）
-                weekly_pref = 3.0 
-                if not master_df.empty:
-                    match = master_df[master_df["名前"] == name]
-                    if not match.empty:
-                        val = pd.to_numeric(match.iloc[0]["週希望"], errors='coerce')
-                        # NaN（空欄）のときだけデフォルトの3にする。0はそのまま0として使う。
-                        weekly_pref = val if not pd.isna(val) else 3.0
+# --- ★★★ 充足率の【動的】計算と書き込み（社員：時間ベース / バイト：日数ベース） ★★★ ---
                 
-                target_days = (weekly_pref / 7) * num_dates
+                # 1. 社員（Wグループ）かバイトかでロジックを分岐
+                if group == "W":
+                    # --- 【社員の場合：時間ベース】 ---
+                    # w_individual_targets（設定シートから読込済）から目標時間を取得。なければ168。
+                    target_h = w_individual_targets.get(name, 168.0)
+                    
+                    # 合計実働が書かれているセルの参照（total_col列 の base_row+1行目）
+                    total_cell_ref = f"{col_letter(total_col)}{base_row + 1}"
+                    
+                    # 数式：合計実働 / 目標時間
+                    dynamic_fulfillment_formula = f"={total_cell_ref}/{target_h}"
+                    current_fmt = fmt_pct  # ％書式を適用
                 
-                # 2. Excel数式の作成
-                col_start = col_letter(date_start)
-                col_end = col_letter(date_start + num_dates - 1)
-                # 3行目（実働）が0より大きい日をカウントする数式パーツ
-                actual_days_f = f'COUNTIF({col_start}{r3}:{col_end}{r3},">0")'
-
-                if target_days == 0:
-                    # 【週希望0の人（新人）の場合】
-                    # 出勤が1日でもあれば「研修(○日)」、0日なら「-」と表示する
-                    # & を使って文字を結合するExcel数式にします
-                    dynamic_fulfillment_formula = f'=IF({actual_days_f}>0, "("&{actual_days_f}&"日)", "-")'
-                    # 新人は％ではないので、％がつかない書式（fmt_merge等）を使います
-                    current_fmt = fmt_merge 
                 else:
-                    # 【通常スタッフの場合】
-                    # 以前と同じ 実際の出勤数 / 目標日数
-                    dynamic_fulfillment_formula = f"={actual_days_f}/{target_days}"
-                    current_fmt = fmt_pct
+                    # --- 【バイトの場合：日数ベース（従来通り）】 ---
+                    # 本人の「週希望」を取得（0を正しく0として扱う）
+                    weekly_pref = 3.0 
+                    if not master_df.empty:
+                        match = master_df[master_df["名前"] == name]
+                        if not match.empty:
+                            val = pd.to_numeric(match.iloc[0]["週希望"], errors='coerce')
+                            # NaN（空欄）のときだけデフォルトの3にする。0はそのまま0として使う。
+                            weekly_pref = val if not pd.isna(val) else 3.0
+                    
+                    target_days = (weekly_pref / 7) * num_dates
+                    
+                    # 日付列の範囲を特定
+                    col_start = col_letter(date_start)
+                    col_end = col_letter(date_start + num_dates - 1)
+                    
+                    # 3行目（実働計算行）が0より大きい日をカウントする数式
+                    actual_days_f = f'COUNTIF({col_start}{r3}:{col_end}{r3},">0")'
 
-                # 3. 4行マージセルに数式を書き込み
+                    if target_days == 0:
+                        # 【週希望0の人（新人）の場合】
+                        # 出勤が1日でもあれば「(○日)」、0日なら「-」と表示
+                        dynamic_fulfillment_formula = f'=IF({actual_days_f}>0, "("&{actual_days_f}&"日)", "-")'
+                        current_fmt = fmt_merge 
+                    else:
+                        # 【通常スタッフの場合】
+                        # 実際の出勤日数 / 目標日数
+                        dynamic_fulfillment_formula = f"={actual_days_f}/{target_days}"
+                        current_fmt = fmt_pct
+
+                # 2. 決定した数式と書式を4行マージセルに書き込み
                 worksheet.merge_range(base_row, fulfillment_col, base_row + 3, fulfillment_col, 
                                       dynamic_fulfillment_formula, current_fmt)
+
 # --- 10. 最終行：日別合計（総人時）の計算 ---
             total_row_idx = header_row + 1 + len(export_df)
             worksheet.set_row(total_row_idx, 25)
