@@ -683,7 +683,7 @@ if 'is_global_admin' not in st.session_state:
 
 # まだどこにもログインしていない場合
 if 'spreadsheet_url' not in st.session_state and not st.session_state.is_global_admin:
-    st.title("🏪 ジョイフル シフト管理システム")
+    st.title("🏪 シフト管理システム")
     
     # URLに店舗IDがあるかチェック（スタッフ用）
     target_id = url_store_id if url_store_id else None
@@ -1094,10 +1094,32 @@ SPREADSHEET_URL = st.session_state.spreadsheet_url
 TIME_OPTIONS = st.session_state.store_time_options
 st.sidebar.title("メニュー")
 
+# --- ★追加：年月選択機能 ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("📅 表示・編集する年月")
+
+# セッションから現在選択中の年月を取得
+curr_v_date = st.session_state.view_date
+
+# サイドバーで選択
+sel_y = st.sidebar.selectbox("年", [curr_v_date.year - 1, curr_v_date.year, curr_v_date.year + 1], index=1, key="sb_year")
+sel_m = st.sidebar.selectbox("月", range(1, 13), index=curr_v_date.month - 1, key="sb_month")
+
+# 選択が変わった瞬間にセッションを更新してリラン
+if sel_y != curr_v_date.year or sel_m != curr_v_date.month:
+    st.session_state.view_date = date(sel_y, sel_m, 1)
+    st.rerun()
+
+# 現在の選択に合わせて変数を再定義（これが重要！）
+year = st.session_state.view_date.year
+month = st.session_state.view_date.month
+num_days = calendar.monthrange(year, month)[1]
+column_names = [f"{d}({WEEKDAYS_JP[calendar.weekday(year, month, d)]})" for d in range(1, num_days + 1)]
+REQ_SHEET = f"req_{year}_{month:02}"
+st.sidebar.markdown("---")
+# -------------------------
+
 # --- 1. 機能の定義とURL用IDの紐付け ---
-# name: if mode == "..." で使う内部名
-# label: サイドバーに表示する名前
-# id: URLパラメータ (?m=...) で使う短い名前
 all_modes_config = [
     {"name": "確定シフト閲覧", "label": "📊 確定シフト閲覧", "id": "view"},
     {"name": "休み希望入力", "label": "📅 休み希望入力", "id": "off"},
@@ -1111,17 +1133,14 @@ all_modes_config = [
 # --- 2. 有効な機能のフィルタリング（修正版） ---
 enabled_features_str = st.session_state.get('enabled_features', '')
 if enabled_features_str:
-    # カンマで切った後、前後のスペースを消す処理を追加
     enabled_names = [n.strip() for n in enabled_features_str.split(",")]
     available_modes = [m for m in all_modes_config if m["name"] in enabled_names]
 else:
     available_modes = all_modes_config
 
 # --- 3. URLパラメータによる初期選択モードの特定 ---
-# 例: &m=off なら「休み希望入力」を選択状態にする
 url_m = st.query_params.get("m", "")
 default_index = 0
-
 for i, m in enumerate(available_modes):
     if m["id"] == url_m:
         default_index = i
@@ -1133,8 +1152,6 @@ selected_label = st.sidebar.radio(
     [m["label"] for m in available_modes],
     index=default_index
 )
-
-# 選択されたラベルから内部名(mode)を取得
 mode = next(m["name"] for m in available_modes if m["label"] == selected_label)
 
 # 管理者パスワード
@@ -3682,7 +3699,7 @@ if mode == "確定シフト閲覧":
 
     st.divider()
 
-    # --- 4. 全体表示エリア (データクレンジング & 合算表示) ---
+# --- 4. 全体表示エリア (データクレンジング & 合算表示) ---
     st.subheader("📅 全体シフト閲覧")
     col_sel_y, col_sel_m = st.columns(2)
     v_year = col_sel_y.selectbox("表示年", [today.year-1, today.year, today.year+1], index=1, key="v_y")
@@ -3817,18 +3834,45 @@ if mode == "確定シフト閲覧":
             key="highlight_name_select"
         )
         
-        # --- 4. ウェブ表示用の加工（2行合算・2行目の名前消去） ---
+# --- 4. ウェブ表示用の加工（4行セットを2行にまとめ、余計な0を消す） ---
         v_display = v_view.copy()
-        v_display = v_display.replace(["nan", "None"], "")
+        
+        # 数値型に変換（エラー回避）
+        v_display["合計実働"] = pd.to_numeric(v_display["合計実働"], errors='coerce')
+        v_display["休憩合計"] = pd.to_numeric(v_display["休憩合計"], errors='coerce')
 
+        # 4行1セット（または2行1セット）でループを回す
+        # Excelから読み込むと、1人あたり4行構成になっていることが多いため
+        new_rows = []
         for i in range(0, len(v_display), 2):
+            # i行目の名前が空で、かつ1つ前の行も名前が空なら、それはExcelの計算行(3-4行目)
+            # それらの行は表示から除外する
+            current_name = str(v_display.iloc[i][v_name_col]).strip()
+            if i > 0 and current_name == "" and str(v_display.iloc[i-1][v_name_col]).strip() == "":
+                continue
+                
             if i + 1 < len(v_display):
+                # 1行目に合計を合算
+                total_n = (v_display.at[i, "合計実働"] if pd.notna(v_display.at[i, "合計実働"]) else 0) + \
+                          (v_display.at[i+1, "合計実働"] if pd.notna(v_display.at[i+1, "合計実働"]) else 0)
+                total_b = (v_display.at[i, "休憩合計"] if pd.notna(v_display.at[i, "休憩合計"]) else 0) + \
+                          (v_display.at[i+1, "休憩合計"] if pd.notna(v_display.at[i+1, "休憩合計"]) else 0)
+                
+                v_display.at[i, "合計実働"] = total_n
+                v_display.at[i, "休憩合計"] = total_b
+                
+                # 2行目の名前と合計を消す（Noneにすることで na_rep="" で消える）
                 v_display.at[i+1, v_name_col] = ""
                 v_display.at[i+1, v_group_col] = ""
-                v_display.at[i, "合計実働"] = round(v_view.at[i, "合計実働"] + v_view.at[i+1, "合計実働"], 1)
-                v_display.at[i, "休憩合計"] = round(v_view.at[i, "休憩合計"] + v_view.at[i+1, "休憩合計"], 1)
                 v_display.at[i+1, "合計実働"] = None
                 v_display.at[i+1, "休憩合計"] = None
+                
+            new_rows.append(v_display.iloc[i])
+            if i + 1 < len(v_display):
+                new_rows.append(v_display.iloc[i+1])
+
+        # 余分な計算行を削った新しいデータフレームを作成
+        v_display_final = pd.DataFrame(new_rows).reset_index(drop=True)
 
         # --- 5. スタイル適用と表示 ---
         # --- 5. スタイル適用と表示 ---
@@ -3886,9 +3930,9 @@ if mode == "確定シフト閲覧":
 
         # 表示実行
         st.dataframe(
-            v_display.style.apply(style_confirmed_grid, axis=None).format(
+            v_display_final.style.apply(style_confirmed_grid, axis=None).format(
                 {"合計実働": "{:.1f}", "休憩合計": "{:.1f}"}, 
-                na_rep=""
+                na_rep="" # ← これで None が空白になる
             ),
             use_container_width=True, 
             height=600, 
