@@ -1613,6 +1613,8 @@ if mode == "休み希望入力":
             del st.session_state.editing_user
             st.rerun()
 elif mode == "シフト自動生成（案）":
+    if "last_generated_df" not in st.session_state:
+        st.session_state.last_generated_df = None
     st.title(" シフト自動生成（案）")
     st.write("①～③の順に設定していってください")
     st.markdown("---")
@@ -2057,70 +2059,64 @@ elif mode == "シフト自動生成（案）":
     st.markdown("---")
     gen_button = st.button("🤖 シフトを生成（約30秒）", use_container_width=True)
 
-    # --- 2. 生成ロジック ---
+# --- 2. 生成ロジック ---
     if gen_button:
         df_stores_all = get_all_stores_cached()
         s_data = df_stores_all[df_stores_all['sheet_url'] == SPREADSHEET_URL].iloc[0]
-        # (データの準備、off_req_countsなどは既存通り...)
-        # --- 略: データのロード部分 ---
+        
+        # --- データの準備 ---
         progress_bar = st.progress(0)
         status_text = st.empty()
-        NUM_TRIALS = 5
-        best_overall_alerts = []  # ★★★ ここに追加 ★★★
-        best_overall_df, min_total_shortage = None, 9999
-        
-# --- データの準備（ここを強化版に差し替え） ---
+        w_staff_list = []
+        if not master_df.empty:
+        # グループが「W」の人を抽出してリストにする
+            w_staff_list = master_df[master_df["グループ"] == "W"]["名前"].tolist()
+        w_names = [str(n).strip() for n in w_staff_list]
+        def recalc_all_w_hours(df, w_names):
+            hours = {}
+            for name in w_names:
+                net = 0.0
+                for c in column_names:
+                    for n in [name, f"{name} "]:
+                        if n in df.index:
+                            val = str(df.at[n, c]).strip()
+                            if "-" in val and val != "✖":
+                                n_net, _ = calc_work_and_break(val)
+                                net += n_net
+                hours[name] = round(net, 1)
+            return hours
+        # ★ 10回シミュレーションの初期設定
+        NUM_TRIALS = 10  
+        min_score = 999999  
+        final_best_df = None  # ループ内で一番良かったものを入れる箱
+        final_best_alerts = []
+
+        # 休み希望データの読み込み（徹底掃除版）
         req_load_raw = load_sheet_cached(REQ_SHEET)
         if req_load_raw is None or req_load_raw.empty:
             req_load = pd.DataFrame(False, index=ALL_NAMES, columns=column_names)
         else:
-            # 1. 1列目をインデックスにし、名前の空白を徹底的に消す
-            req_load_raw = req_load_raw.drop_duplicates(subset=req_load_raw.columns[0])
-            req_load_raw = req_load_raw.set_index(req_load_raw.columns[0])
+            req_load_raw = req_load_raw.drop_duplicates(subset=req_load_raw.columns[0]).set_index(req_load_raw.columns[0])
             req_load_raw.index = req_load_raw.index.astype(str).str.strip()
-            
-            # 2. ALL_NAMESも掃除して再インデックス（これで名前が一致する）
             clean_names = [str(n).strip() for n in ALL_NAMES]
             req_load = req_load_raw.reindex(index=clean_names).fillna(False)
-            
-            # 3. True/Falseの判定
-            req_load = req_load.map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0", "TRUE.0", "YES"])
-        off_req_counts = req_load.sum(axis=1).to_dict()
-# --- 1. 目標出勤日数の計算（0日設定対応版） ---
-        num_weeks = num_days / 7.0
+            req_load = req_load.map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0", "YES"])
         
-        # 貯金箱から目標率を取得し、万が一空なら0.7にする
-        t_rate = st.session_state.get('target_rate')
-        if t_rate is None or pd.isna(t_rate) or t_rate == 0:
-            t_rate = 0.7
+        off_req_counts = req_load.sum(axis=1).to_dict()
+        num_weeks = num_days / 7.0
+        t_rate = st.session_state.get('target_rate', 0.7)
 
+        # スタッフの目標日数計算
         staff_goals = {}
         for _, row in master_df.iterrows():
-            # 名前が空の行（ゴミデータ）は飛ばす
             s_name = str(row.get("名前", "")).strip()
-            if not s_name or s_name == "nan":
-                continue
-                
-            # 週希望を数値化（空または0なら0にする）
+            if not s_name or s_name == "nan": continue
             v_req = pd.to_numeric(row.get("週希望"), errors='coerce')
-            if pd.isna(v_req):
-                v_req = 0.0 # 0を許可
-            
-            # --- 計算の実行 ---
-            raw_calc = v_req * num_weeks * t_rate
-            
-            # 【修正点】0日を許可するため max(0, ...) に変更
-            if pd.isna(raw_calc) or v_req == 0:
-                staff_goals[s_name] = 0
-            else:
-                # 週希望が1日以上ある場合は、切り捨てで0にならないよう最低1日とするか、
-                # 完全に計算に任せるなら int(raw_calc) のみにします。
-                # ここでは「週希望があるなら最低1日」を維持しつつ、0の場合は0を通します。
-                staff_goals[s_name] = max(0, int(raw_calc))
+            staff_goals[s_name] = max(0, int(v_req * num_weeks * t_rate)) if pd.notna(v_req) else 0
 
-        # --- 2. シフト生成の試行ループ（ここから下は同様） ---
+        # --- シミュレーションループ開始 ---
         for trial_idx in range(NUM_TRIALS):
-            status_text.text(f"シフト案 {trial_idx + 1} 枚目を計算中...")
+            status_text.text(f"シミュレーション {trial_idx + 1}/{NUM_TRIALS} 枚目を計算中...")
             
             # --- 2行化のための名前リスト作成 ---
             EXTENDED_NAMES = []
@@ -2266,18 +2262,44 @@ elif mode == "シフト自動生成（案）":
                             trial_alerts.append(f"{d}日:{p_name}欠員")
                 for name in ALL_NAMES:
                     if name not in assigned_today: consecutive_days[name] = 0
+# --- ここから書き換え ---
             trial_df.attrs['slot_memory'] = slot_memory
-            if trial_shortage_count < min_total_shortage:
-                min_total_shortage = trial_shortage_count
-                best_overall_df, best_overall_alerts = trial_df, trial_alerts
-                best_overall_df.attrs['slot_memory'] = slot_memory.copy()
+            
+            # --- 1回分のパズルが完成した直後に採点を行う ---
+            # 1. 欠員ペナルティ
+            shortage_penalty = trial_shortage_count * 100
+            
+            # 2. W労働時間誤差ペナルティ（目標168hとのズレを計算）
+            current_w_hours = recalc_all_w_hours(trial_df, w_names)
+            w_error_penalty = 0
+            for name in w_names:
+                target = w_individual_targets.get(name, 168.0)
+                actual = current_w_hours.get(name, 0.0)
+                w_error_penalty += abs(actual - target) * 2 # 1時間のズレにつき2点
+
+            # 総合スコア（低いほど良い案）
+            trial_total_score = shortage_penalty + w_error_penalty
+
+            # もし今までの最高記録（min_score）よりスコアが低ければ保存
+            if trial_total_score < min_score:
+                min_score = trial_total_score
+                final_best_df = trial_df.copy() # copy()で状態を確保
+                final_best_alerts = trial_alerts
+                # メモリ情報も確保
+                final_best_df.attrs['slot_memory'] = slot_memory.copy()
+            
             progress_bar.progress((trial_idx + 1) / NUM_TRIALS)
-        # ==========================================
-        # ★ 試行ループ後の処理（共通） ★
-        # ==========================================
-        if best_overall_df is None:
-            st.error("シフト生成に失敗しました。")
+
+        # --- ここで 10回(for) のループが終了 ---
+
+        # 全試行の中で最も良かった案を採用案にする
+        if final_best_df is not None:
+            best_overall_df = final_best_df
+            st.session_state.last_shortage_alerts = final_best_alerts
+        else:
+            st.error("シフト生成に失敗しました。設定を見直してください。")
             st.stop()
+        # --- 書き換えここまで ---
 
         # ★★★ チェックボックスの状態で分岐 ★★★
         if transfer_baito_to_staff or merge_staff_shifts:
@@ -2296,10 +2318,6 @@ elif mode == "シフト自動生成（案）":
         # ==========================================
         # ★★★ ステップ3：Wの短時間シフトを延長 ★★★
         # ==========================================
-        w_staff_list = []
-        if not master_df.empty:
-            w_staff_list = master_df[master_df["グループ"] == "W"]["名前"].tolist()
-        w_names = [str(n).strip() for n in w_staff_list]
 
         extend_log = []
         extend_count = 0
@@ -2497,8 +2515,8 @@ elif mode == "シフト自動生成（案）":
                     if ("-" in v1 and v1 != "✖") or ("-" in v2 and v2 != "✖"):
                         cost += 30
 
-            # 現在の連勤数に応じたペナルティ
-            # 前後に連続何日働いているかカウント
+# 現在の連勤数に応じたペナルティ
+# 前後に連続何日働いているかカウント
             cons_before = 0
             ci = target_idx - 1
             while ci >= 0:
@@ -2557,20 +2575,7 @@ elif mode == "シフト自動生成（案）":
         # ==========================================
         # ★ ステップ6：目標達成ループ（仕様準拠版） ★
         # ==========================================
-        # Wの実働時間を再計算する関数
-        def recalc_all_w_hours(df, w_names):
-            hours = {}
-            for name in w_names:
-                net = 0.0
-                for c in column_names:
-                    for n in [name, f"{name} "]:
-                        if n in df.index:
-                            val = str(df.at[n, c]).strip()
-                            if "-" in val and val != "✖":
-                                n_net, _ = calc_work_and_break(val)
-                                net += n_net
-                hours[name] = round(net, 1)
-            return hours
+
 
         # バイトの充足率（日数ベース）を返す
         def get_baito_fulfillment(df, name):
@@ -2582,7 +2587,7 @@ elif mode == "シフト自動生成（案）":
             goal = staff_goals.get(name, 1)
             return days / max(goal, 1)
 
-        # メインループ
+# メインループ
         loop_count = 0
         max_loops = 300
         staff_slot_costs_copy = {name: list(costs) for name, costs in staff_slot_costs.items()}
@@ -2693,7 +2698,7 @@ elif mode == "シフト自動生成（案）":
             # slot_memory 更新
             sdata["assigned_to"] = w_name
 
-            # --- ロングシフト化（同じ日に昼と夜が揃ったら連結） ---
+# --- ロングシフト化（同じ日に昼と夜が揃ったら連結） ---
             v1 = str(best_overall_df.at[w_name, col]).strip() if w_name in best_overall_df.index else ""
             v2 = str(best_overall_df.at[name2, col]).strip() if name2 in best_overall_df.index else ""
             if "-" in v1 and "-" in v2 and v1 != "✖" and v2 != "✖":
@@ -2706,13 +2711,57 @@ elif mode == "シフト自動生成（案）":
 
             # --- 使用した空きコマをリストから削除 ---
             # 今回使った空きコマ（target_slot_name）を削除
+# --- 使用した空きコマをリストから削除 ---
             staff_slot_costs_copy[best_w_name] = [
                 c for c in staff_slot_costs_copy[best_w_name] if c["slot"] != target_slot_name
             ]
-
             loop_count += 1
 
-        # 最終集計
+            # --- [B] 今回の試行（trial）の採点 ---
+            # 1. 欠員ペナルティ
+            current_trial_shortage = 0
+            if 'slot_memory' in trial_df.attrs:
+                for sid, data in trial_df.attrs['slot_memory'].items():
+                    if not data.get("assigned_to"): 
+                        current_trial_shortage += 1
+            
+            shortage_penalty = current_trial_shortage * 100
+            
+            # 2. Wの労働時間誤差ペナルティ
+            # recalc_all_w_hours を使って今回の試行時間を計算
+            current_w_hours = recalc_all_w_hours(trial_df, w_names)
+            w_error_penalty = 0
+            for name in w_names:
+                target = w_individual_targets.get(name, 168.0)
+                actual = current_w_hours.get(name, 0.0)
+                w_error_penalty += abs(actual - target) * 2
+            
+            trial_score = shortage_penalty + w_error_penalty
+            
+            # 3. 過去最高を塗り替えたら保存
+            if trial_score < min_score:
+                min_score = trial_score
+                final_best_df = trial_df.copy() # 成功案を確保
+                final_best_alerts = trial_alerts 
+                if 'slot_memory' in trial_df.attrs:
+                    final_best_df.attrs['slot_memory'] = trial_df.attrs['slot_memory'].copy()
+
+            progress_bar.progress((trial_idx + 1) / NUM_TRIALS)
+
+        # ==========================================
+        # ★ ここで10回のループ(for)が終了 ★
+        # ==========================================
+        
+        # 4. 全試行の中で最も良かった案を「採用案」として確定させる
+        if final_best_df is not None:
+            best_overall_df = final_best_df # ここで初めてメインの変数にセット
+            st.session_state.last_shortage_alerts = final_best_alerts
+        else:
+            st.error("有効なシフト案を生成できませんでした。")
+            st.stop()
+
+    # 以降、Snippet 1の「最終微調整（0.5h延長）」や「2行分割」に進む...
+# 最終集計
         final_hours = recalc_all_w_hours(best_overall_df, w_names)
         # ★★★ 実働時間計算関数（最終微調整用） ★★★
         def calc_hours(df, name):
@@ -2793,23 +2842,44 @@ elif mode == "シフト自動生成（案）":
                         best_overall_df.at[clean_name, col] = part1
                         best_overall_df.at[name2, col] = part2
 
+# --- 最終的な実働時間計算関数（Excelの数式と一致させる） ---
+        def calc_hours_for_display(df, name):
+            total_net = 0.0
+            for c in column_names:
+                day_net = 0.0
+                # 1行目と2行目（名前＋スペース）の両方をチェック
+                for n in [name, f"{name} "]:
+                    if n in df.index:
+                        val = str(df.at[n, c]).strip()
+                        if "-" in val and val != "✖":
+                            try:
+                                s_str, e_str = val.split("-")
+                                # 単純に「終了時間 - 開始時間」を計算
+                                diff = time_to_float(e_str) - time_to_float(s_str)
+                                if diff < 0: diff += 24 # 深夜跨ぎ対応
+                                day_net += diff
+                            except:
+                                pass
+                total_net += day_net
+            return round(total_net, 1)
+
         # ==========================================
-        # ★ 最終達成状況の表示（ここから下に続く） ★
+        # ★ 最終達成状況の表示（修正版） ★
         # ==========================================
         st.subheader("📊 社員の労働時間 達成状況")
-        # （ここは以前の W の達成状況表示コードをそのまま入れる）
         final_all_ok = True
         for name in w_names:
+            # 設定から目標時間を取得
             target = w_individual_targets.get(name, monthly_target_hours)
-            h = calc_hours(best_overall_df, name)
+            # 修正した関数で計算
+            h = calc_hours_for_display(best_overall_df, name)
+            
             if h >= target:
                 st.success(f"✅ {name}: {h:.1f}h / {target:.0f}h")
             else:
+                # 0.1h程度の誤差は許容するようにしても良いですが、厳密に判定
                 final_all_ok = False
                 st.warning(f"⚠️ {name}: {h:.1f}h / {target:.0f}h (不足 {target-h:.1f}h)")
-        
-        if final_all_ok:
-            st.balloons()
 # ==========================================
         # ★ 最終欠員集計ロジック（ここを差し替え） ★
         # ==========================================
@@ -3261,14 +3331,35 @@ elif mode == "シフト自動生成（案）":
                 )
                 worksheet.write_formula(total_row_idx, c, sum_formula, fmt_total_combined)
 
-            # --- 右端：月間総合計（実働・休憩） ---
-            # ここは結合セルなので、シンプルなSUMでOK（一番上の行の数値だけを自動で拾うため）
+# --- 右端：月間総合計（実働・休憩） ---
+# ここは結合セルなので、シンプルなSUMでOK（一番上の行の数値だけを自動で拾うため）
             total_work_sum_formula = f"=SUM({col_letter(total_col)}{first_data_row}:{col_letter(total_col)}{last_data_row})"
             worksheet.write_formula(total_row_idx, total_col, total_work_sum_formula, fmt_total_combined)
 
             total_break_sum_formula = f"=SUM({col_letter(break_col)}{first_data_row}:{col_letter(break_col)}{last_data_row})"
             worksheet.write_formula(total_row_idx, break_col, total_break_sum_formula, fmt_total_combined)
+# --- 【追加】印刷枠外への欠員情報の書き込み ---
+            # 1. 欠員用の書式設定（赤太字）
+            shortage_fmt = workbook.add_format({
+                'bold': True,
+                'font_color': 'red',
+                'size': 12,
+                'font_name': 'Meiryo UI'
+            })
 
+            # 2. 【重要】印刷範囲をテーブルの端（fulfillment_col）までに制限
+            # これにより、この後に右側に書くメモは印刷されません
+            worksheet.print_area(0, 0, total_row_idx, fulfillment_col)
+
+            # 3. 欠員リストがある場合に、表の右側（2列空けた位置）に書き込む
+            if st.session_state.last_shortage_alerts:
+                memo_col = fulfillment_col + 2
+                worksheet.write(header_row, memo_col, "⚠️ 欠員・調整が必要な箇所（募集・ヘルプ検討）", shortage_fmt)
+                
+                # 欠員情報を1行ずつ書き込む
+                for i, msg in enumerate(st.session_state.last_shortage_alerts):
+                    # 各項目の書き出し位置を調整（2行おきに配置）
+                    worksheet.write(header_row + 2 + (i * 2), memo_col, f"・{msg}", shortage_fmt)
 # --- 仕上げ：ウィンドウ枠の固定 ---
             worksheet.freeze_panes(header_row + 1, 2)
 
