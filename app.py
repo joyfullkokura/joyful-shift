@@ -412,7 +412,22 @@ def calc_work_and_break_combined(val1, val2):
     final_net2 = round(work2 - break2, 1)
     
     return final_net1, break1, final_net2, break2
-st.set_page_config(page_title="ジョイフル シフト管理", layout="wide")
+st.set_page_config(page_title="ジョイフル シフト管理", layout="wide",page_icon="🏪")
+# --- 右上のメニューとGitHubアイコンを隠す ---
+st.markdown("""
+    <style>
+    #MainMenu {visibility: hidden;}
+    header {visibility: hidden;}
+    footer {visibility: hidden;}
+    /* GitHubのアイコンを特定して消す */
+    .stAppDeployButton {
+        display:none;
+    }
+    [data-testid="stHeader"] {
+        display:none;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 # --- 30分刻みの時間リスト作成 ---
 TIME_OPTIONS = [f"{h:02d}:{m:02d}" for h in range(0, 31) for m in [0, 30]]# 24:30以降は不要なので24:00までにする
 TIME_OPTIONS = TIME_OPTIONS[:-1]
