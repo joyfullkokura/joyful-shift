@@ -1611,21 +1611,30 @@ if mode == "休み希望入力":
             with col_cancel:
                 cancel_btn = st.form_submit_button("✖ 閉じる", use_container_width=True)
 
-        # 3. 保存ロジック
+# 3. 保存ロジック
         if submit_btn:
             with st.spinner("保存中..."):
                 try:
-                    latest_all_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=REQ_SHEET, ttl=0)
+                    # --- ここを修正：読み込みに失敗しても空のデータを作る ---
+                    try:
+                        latest_all_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=REQ_SHEET, ttl=0)
+                    except:
+                        latest_all_raw = None # 存在しない場合はNone
+
                     if latest_all_raw is not None and not latest_all_raw.empty:
+                        # 既存データがある場合
                         latest_all_indexed = latest_all_raw.drop_duplicates(subset=latest_all_raw.columns[0]).set_index(latest_all_raw.columns[0])
                         latest_all_indexed.index = latest_all_indexed.index.astype(str).str.strip()
                         latest_all_indexed = latest_all_indexed.reindex(columns=column_names).fillna(False)
                         latest_all_indexed = latest_all_indexed.map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0", "YES"])
                     else:
+                        # まだシートがない場合は、現在の画面のデータ（display_df）を土台にする
                         latest_all_indexed = display_df.copy()
 
+                    # 編集中のユーザーのデータを更新
                     latest_all_indexed.loc[user] = pd.Series(new_updates)
 
+                    # 保存実行（ここでシートがなければ作成されます）
                     if save_sheet_robust(latest_all_indexed, REQ_SHEET):
                         st.session_state[state_key] = latest_all_indexed 
                         del st.session_state.editing_user 
@@ -1633,7 +1642,7 @@ if mode == "休み希望入力":
                         time.sleep(0.5)
                         st.rerun()
                 except Exception as e:
-                    st.error(f"保存エラー: {e}")
+                    st.error(f"保存エラー詳細: {e}")
 
         if cancel_btn:
             del st.session_state.editing_user
