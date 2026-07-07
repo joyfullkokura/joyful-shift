@@ -413,18 +413,29 @@ def calc_work_and_break_combined(val1, val2):
     
     return final_net1, break1, final_net2, break2
 st.set_page_config(page_title="ジョイフル シフト管理", layout="wide",page_icon="🏪")
-# --- 右上のメニューとGitHubアイコンを隠す ---
+st.markdown('<link rel="apple-touch-icon" href="https://em-content.zobj.net/source/microsoft-teams/363/convenience-store_1f3ea.png">', unsafe_allow_html=True)
+# --- 右上のメニュー・GitHubアイコン・デプロイボタンを「力づく」で隠す ---
 st.markdown("""
     <style>
-    #MainMenu {visibility: hidden;}
-    header {visibility: hidden;}
-    footer {visibility: hidden;}
-    /* GitHubのアイコンを特定して消す */
-    .stAppDeployButton {
-        display:none;
-    }
+    /* ヘッダー全体を非表示 */
     [data-testid="stHeader"] {
-        display:none;
+        display: none !important;
+    }
+    /* デプロイボタン（GitHubアイコン含む）を非表示 */
+    .stAppDeployButton {
+        display: none !important;
+    }
+    /* 右上の三本線メニューを非表示 */
+    #MainMenu {
+        display: none !important;
+    }
+    /* フッター（Made with Streamlit）を非表示 */
+    footer {
+        display: none !important;
+    }
+    /* アプリ全体の余白調整（ヘッダーを消した後の隙間を埋める） */
+    .stApp {
+        margin-top: -50px;
     }
     </style>
     """, unsafe_allow_html=True)
