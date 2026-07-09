@@ -515,7 +515,7 @@ def load_sheet_cached(worksheet_name):
         return None
 
 def save_sheet_robust(df, worksheet_name, target_url=None):
-    """データを保存する。target_urlが指定されればそこへ、なければ現在の店のURLへ。"""
+    """データを保存する。列名の重複エラーを回避する修正版"""
     if target_url is None:
         target_url = SPREADSHEET_URL
         
@@ -536,38 +536,43 @@ def save_sheet_robust(df, worksheet_name, target_url=None):
             sh.add_worksheet(title=worksheet_name, rows="100", cols="50")
             st.info(f"✨ 新しいシート「{worksheet_name}」を作成しました。")
 
-        save_df = df.data if hasattr(df, 'data') else df.copy()
+        # 1. データのコピー
+        save_df = df.copy()
+
+        # 2. 列名の重複を保存前に強制排除 (重要！)
+        # 同じ名前の列があると reset_index でエラーになるため
+        new_cols = []
+        counts = {}
+        for col in save_df.columns:
+            c_str = str(col)
+            if c_str in counts:
+                counts[c_str] += 1
+                new_cols.append(f"{c_str}_{counts[c_str]}")
+            else:
+                counts[c_str] = 0
+                new_cols.append(c_str)
+        save_df.columns = new_cols
+
+        # 3. インデックスの処理
+        # インデックス名がすでに列名にある場合、エラーを避けるためにインデックス名を一時的に変更
+        if save_df.index.name in save_df.columns:
+            save_df.index.name = "index_original"
         
-        # ★★★ 修正：インデックスをリセットして列として保持 ★★★
-        # インデックス名がある場合、それを列として残す
-        if save_df.index.name is not None:
-            index_name = save_df.index.name
-            save_df = save_df.reset_index()  # インデックスを列に戻す
-            # インデックス列が既に存在する場合は重複を避ける
-            if index_name in save_df.columns and save_df.columns.tolist().count(index_name) > 1:
-                # 重複列を削除
-                cols_to_keep = []
-                seen = set()
-                for col in save_df.columns:
-                    if col not in seen:
-                        cols_to_keep.append(col)
-                        seen.add(col)
-                save_df = save_df[cols_to_keep]
-        else:
-            save_df = save_df.reset_index(drop=True)
+        save_df = save_df.reset_index()
+
+        # 4. 不要なシステム列の削除
+        for extra_col in ['index', 'level_0', 'index_original']:
+            if extra_col in save_df.columns:
+                # 「名前」という列が他にあるなら削除、ないならリネーム
+                if extra_col == 'index_original' and '名前' not in save_df.columns:
+                    save_df = save_df.rename(columns={extra_col: '名前'})
+                else:
+                    save_df = save_df.drop(columns=[extra_col])
         
-        # ★ 不要な列を削除
-        if 'index' in save_df.columns:
-            save_df = save_df.drop(columns=['index'])
-        if 'level_0' in save_df.columns:
-            save_df = save_df.drop(columns=['level_0'])
-        
-        # True/Falseを文字列に変換
+        # 5. 文字列変換 (True/False対策)
         save_df = save_df.map(lambda x: "TRUE" if x is True else ("FALSE" if x is False else x))
         
-        # ★★★ 保存前に列名を確認 ★★★
-        # store_id などの重要な列が欠落していないか確認
-        # 指定したURLとシート名に書き込む
+        # 6. 保存実行
         conn.update(spreadsheet=target_url, worksheet=worksheet_name, data=save_df)
         st.cache_data.clear()
         return True
