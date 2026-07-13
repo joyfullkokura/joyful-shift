@@ -4,57 +4,68 @@ import calendar
 import random
 import io
 import time
-from datetime import date, timedelta, datetime, timezone # timezoneを追加
-from datetime import date, timedelta  # 
+from datetime import date, timedelta, datetime, timezone 
+from datetime import date, timedelta   
 from datetime import date, timedelta, datetime
 from streamlit_gsheets import GSheetsConnection
-import streamlit.components.v1 as components  # 追加
+import streamlit.components.v1 as components  
 import requests
 import json
 import jpholiday
-def send_line_file(file_url, file_name):
-    """LINE Messaging APIを使ってファイルを送信する"""
-    LINE_ACCESS_TOKEN = "あなたのトークン"
-    LINE_DESTINATION_ID = "送信先のID"
-    
-    url = "https://api.line.me/v2/bot/message/push"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {LINE_ACCESS_TOKEN}"
-    }
-    
-    # LINEのファイルメッセージ形式
-    data = {
-        "to": LINE_DESTINATION_ID,
-        "messages": [
-            {
-                "type": "file",
-                "fileName": file_name,
-                "fileContentUrl": file_url
-            }
-        ]
-    }
-    
+def save_user_request_single_row(user_name, updates_dict, worksheet_name):
+    """特定のユーザーの行だけをピンポイントで更新する（API節約版）"""
     try:
-        response = requests.post(url, headers=headers, data=json.dumps(data))
-        return response.status_code == 200
-    except Exception:
+        raw_gc = None
+        if hasattr(conn, "_client"): raw_gc = conn._client
+        elif hasattr(conn, "client") and hasattr(conn.client, "_client"): raw_gc = conn.client._client
+        
+        sh = raw_gc.open_by_url(SPREADSHEET_URL)
+        
+        try:
+            ws = sh.worksheet(worksheet_name)
+        except:
+            return False
+
+        cell = ws.find(user_name, in_column=1)
+        if not cell:
+            st.error(f"シート内に {user_name} さんが見つかりません。")
+            return False
+        
+        row_num = cell.row 
+
+        row_values = []
+        for col in column_names:
+            val = updates_dict.get(col, False)
+            row_values.append("TRUE" if val else "FALSE")
+        
+
+        start_col = "B"
+        end_col_idx = len(column_names) + 1
+        def get_col_letter(n):
+            return chr(64 + n) if n <= 26 else "A" + chr(64 + n - 26)
+            
+        end_col_letter = get_col_letter(end_col_idx)
+        range_name = f"{start_col}{row_num}:{end_col_letter}{row_num}"
+        
+        ws.update(range_name, [row_values])
+        
+        st.cache_data.clear()
+        return True
+    except Exception as e:
+        st.error(f"保存エラー: {e}")
         return False
+
 def save_config_data(df, worksheet_name="config"):
-    """設定シート専用の保存関数（store_idチェックなし）"""
     return save_sheet_robust(df, worksheet_name, target_url=SPREADSHEET_URL)
 def calc_work_and_break_for_pair(val1, val2):
-    """2つの時間枠（前半・後半）を合算して正しい休憩を計算する"""
     net1, brk1 = calc_work_and_break(val1)
     net2, brk2 = calc_work_and_break(val2)
     
-    # 総勤務時間（休憩込み）
     total_hours = (net1 + brk1) + (net2 + brk2)
     
     if total_hours == 0:
         return net1, brk1, net2, brk2
     
-    # 合計勤務時間から正しい休憩を決定
     if total_hours > 8.0:
         correct_total_break = 1.0
     elif total_hours > 6.0:
@@ -62,7 +73,6 @@ def calc_work_and_break_for_pair(val1, val2):
     else:
         correct_total_break = 0.0
     
-    # 既存の休憩と差がある場合のみ再計算
     old_break = brk1 + brk2
     if correct_total_break != old_break:
         work1 = net1 + brk1
@@ -76,7 +86,6 @@ def calc_work_and_break_for_pair(val1, val2):
             net2 = round(work2 - brk2, 1)
     
     return net1, brk1, net2, brk2
-# セッションステートの初期化を一元管理
 def init_session_state():
     """セッションステートの初期化を一括で行う"""
     defaults = {
@@ -88,20 +97,17 @@ def init_session_state():
         'daily_layout_list': None,
         'daily_calc_results': None,
         'tweet_data_cache': None,
-        'data_loaded_flags': {}  # 各データの読み込み状態を管理
+        'data_loaded_flags': {}  
     }
     
     for key, default_value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = default_value
 
-# アプリ起動時に一度だけ実行
 init_session_state()
 
-# データ読み込み関数の改善
-@st.cache_data(ttl=300)  # 5分間キャッシュ
+@st.cache_data(ttl=300) 
 def load_shift_data_cached(spreadsheet_url, sheet_name):
-    """シフトデータをキャッシュ付きで読み込む"""
     try:
         conn_temp = st.connection("gsheets", type=GSheetsConnection)
         df = conn_temp.read(spreadsheet=spreadsheet_url, worksheet=sheet_name, ttl=0)
@@ -109,26 +115,21 @@ def load_shift_data_cached(spreadsheet_url, sheet_name):
     except:
         return None
 def display_month_events(year, month):
-    """当月のイベント情報を整理して表示"""
     holidays = get_month_holidays_list(year, month)
     local_events = get_kitakyushu_events(year, month)
     
-    # 全日程を日付順に統合
     all_events = {}
     
-    # 祝日
     for day, name in holidays:
         if day not in all_events:
             all_events[day] = []
         all_events[day].append(("祝", name))
     
-    # 地域イベント
     for day, name in local_events:
         if day not in all_events:
             all_events[day] = []
         all_events[day].append(("🚩", name))
     
-    # 日付順に表示
     with st.container(border=True):
         st.markdown(f"### 📅 {month}月の特別日")
         
@@ -138,7 +139,6 @@ def display_month_events(year, month):
             for day in sorted(all_events.keys()):
                 events = all_events[day]
                 event_text = " / ".join([f"{icon} {name}" for icon, name in events])
-                # 曜日も表示
                 w_idx = calendar.weekday(year, month, day)
                 w_name = WEEKDAYS_JP[w_idx]
                 st.markdown(f"**{day}日({w_name})**: {event_text}")
@@ -148,9 +148,8 @@ def display_month_events(year, month):
 def get_all_stores_cached():
     master_conn = st.connection("gsheets", type=GSheetsConnection)
     df = master_conn.read(spreadsheet=MASTER_DATABASE_URL, worksheet="stores", ttl=0)
-    # --- 修正点：空行を削除 ---
-    df = df.dropna(how='all') # 全て空の行を削除
-    df = df[df['store_id'].notna()] # store_id が空の行も削除
+    df = df.dropna(how='all') 
+    df = df[df['store_id'].notna()] 
     df.columns = df.columns.str.strip()
     return df
 def get_split_shift(slot_time_str, store_info):
@@ -163,13 +162,11 @@ def get_split_shift(slot_time_str, store_info):
     e = time_to_float(end_str)
     duration = e - s
     
-    # 6時間以下なら休憩なし
     if duration <= 6.0:
         return slot_time_str, ""
     
     break_len = 1.0 if duration > 8.0 else 0.75
     
-    # 休憩候補（アイドルタイム）のリスト
     idles = [
         (time_to_float(store_info.get('idle1_s', "14:00")), time_to_float(store_info.get('idle1_e', "15:00"))),
         (time_to_float(store_info.get('idle2_s', "15:00")), time_to_float(store_info.get('idle2_e', "16:00"))),
@@ -177,36 +174,27 @@ def get_split_shift(slot_time_str, store_info):
     ]
     
     for b_start, b_end in idles:
-        # 開始・終了が同じ、または0の場合はスキップ
         if b_start == b_end: continue
         
-        # 【重要】勤務開始から少なくとも1.5時間後、かつ終了まで1.5時間以上ある場所で切る
         if (s + 1.5 <= b_start) and (e >= b_start + break_len + 1.5):
             part1 = f"{float_to_time(s)}-{float_to_time(b_start)}"
             part2 = f"{float_to_time(b_start + break_len)}-{float_to_time(e)}"
             return part1, part2
             
-    # 合致するアイドルタイムがない場合は真ん中で分割
     mid_start = s + (duration / 2) - (break_len / 2)
-    # 30分単位に丸める処理を入れるとより綺麗です
     mid_start = round(mid_start * 2) / 2
     return f"{float_to_time(s)}-{float_to_time(mid_start)}", f"{float_to_time(mid_start + break_len)}-{float_to_time(e)}"
 def get_month_holidays_list(y, m):
     """指定した年月の祝日を [(日, 名前), ...] の形式で返す"""
-    # その月が何日まであるか取得
     last_day = calendar.monthrange(y, m)[1]
     start_date = date(y, m, 1)
     end_date = date(y, m, last_day)
     
-    # 指定期間の祝日を取得
     h_list = jpholiday.between(start_date, end_date)
-    # [(datetime.date(2026, 7, 20), '海の日'), ...] -> [(20, '海の日'), ...] に変換
     return [(h[0].day, h[1]) for h in h_list]
-# 日本時間 (JST) を定義
 JST = timezone(timedelta(hours=+9), 'JST')
 def get_kitakyushu_events(y, m):
     """北九州市・小倉周辺の主要イベント情報を返す"""
-    # 毎年恒例の大型イベント
     fixed_events = {
         1: [(10, "北九州市二十歳の記念式典（メディアドーム）")],
         2: [(15, "北九州マラソン（周辺交通規制あり）")],
@@ -218,7 +206,6 @@ def get_kitakyushu_events(y, m):
         12: [(24, "小倉イルミネーション")]
     }
     
-    # 選択された年月に該当するイベントを抽出
     return fixed_events.get(m, [])
 def export_cleaning_handwriting_sheet(year, period_label):
     if period_label == "1-4月": months = [1, 2, 3, 4]
@@ -230,27 +217,22 @@ def export_cleaning_handwriting_sheet(year, period_label):
         workbook = writer.book
         worksheet = workbook.add_worksheet(f"清掃用_{period_label}")
         
-        # --- 【超重要】A4縦1枚に強制的に収める設定 ---
         worksheet.set_portrait()
-        worksheet.set_paper(9) # A4
-        worksheet.set_margins(0.3, 0.3, 0.3, 0.3) # 余白をさらに狭く
+        worksheet.set_paper(9) 
+        worksheet.set_margins(0.3, 0.3, 0.3, 0.3) 
         worksheet.center_horizontally()
         
-        # これが「1枚に収める」魔法の命令です
         worksheet.fit_to_pages(1, 1) 
 
-        # --- 書式 ---
         fmt_title = workbook.add_format({'bold': True, 'size': 18, 'align': 'center', 'valign': 'vcenter'})
         fmt_month = workbook.add_format({'bold': True, 'size': 11, 'bg_color': '#F2F2F2', 'border': 2})
         fmt_head = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'size': 9})
         fmt_cell = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'size': 10})
         fmt_memo = workbook.add_format({'border': 1, 'valign': 'top', 'size': 9})
 
-        # 1. タイトル
         worksheet.set_row(0, 30)
         worksheet.merge_range('A1:J1', f"🧹 {year}年 {period_label} モップ清掃チェック表", fmt_title)
 
-        # 2. 画像（横幅に収まるようサイズを微調整）
         try:
             worksheet.insert_image('B2', 'cleaning_map.png', {
                 'x_scale': 0.275, 
@@ -260,47 +242,40 @@ def export_cleaning_handwriting_sheet(year, period_label):
             })
         except: pass
 
-        curr_row = 12 # 画像の下から開始（行間を詰める）
+        curr_row = 12 
 
-        # 3. 4ヶ月分のループ
         for m in months:
             worksheet.set_row(curr_row, 18)
             worksheet.merge_range(curr_row, 0, curr_row, 9, f" 【{m}月】", fmt_month)
             curr_row += 1
             
-            # ヘッダー
             worksheet.set_row(curr_row, 18)
             headers = ["清掃日", "①", "②", "③", "④", "⑤", "⑥", "⑦", "担当", "補足"]
             for c, h in enumerate(headers):
                 worksheet.write(curr_row, c, h, fmt_head)
             curr_row += 1
 
-            # 日曜日
             sundays = get_sundays(year, m)
             for s in sundays:
-                worksheet.set_row(curr_row, 28) # 高さを少し抑える
+                worksheet.set_row(curr_row, 28) 
                 worksheet.write(curr_row, 0, s.strftime("%m/%d(日)"), fmt_cell)
                 for c in range(1, 8):
                     worksheet.write(curr_row, c, "", fmt_cell)
                 worksheet.write(curr_row, 8, "", fmt_cell)
                 worksheet.write(curr_row, 9, "", fmt_memo)
                 curr_row += 1
-            curr_row += 1 # 月の間の余白を1行にする
-
-        # --- 【重要】横幅がはみ出さないように列幅をミリ単位で調整 ---
-        worksheet.set_column('A:A', 11) # 日付
-        worksheet.set_column('B:H', 3.2) # ①〜⑦（細く！）
-        worksheet.set_column('I:I', 11) # 担当
-        worksheet.set_column('J:J', 28) # 補足（ここが長すぎると2ページ目に飛ぶ）
+            curr_row += 1 
+        worksheet.set_column('A:A', 11) 
+        worksheet.set_column('B:H', 3.2) 
+        worksheet.set_column('I:I', 11) 
+        worksheet.set_column('J:J', 28) 
 
     return buffer.getvalue()
 def get_japan_today():
     return datetime.now(JST).date()
 def send_line_notification(message):
     """LINE Messaging APIを使ってグループに通知を送る"""
-    # ここに取得したアクセストークンを貼り付け
     LINE_ACCESS_TOKEN = "CWtJrVJ9DydSnL/meqMN5K8+9gV3j3zLWjlTFHuHbj9K7wNPgZah76+RzB77c/1ASW+IReRwpVetUSavMIitb85I7pmCp7hfJpY7931zzr6INTNzdFPBVXgnMehg5j+LN9bxO6aY1AIXM/k5cAwr0QdB04t89/1O/w1cDnyilFU="
-    # ここに送信先のグループID（または自分のユーザーID）を貼り付け
     LINE_DESTINATION_ID = "U627c8971cff4e882b7f8673addc08ffa"
     
     url = "https://api.line.me/v2/bot/message/push"
@@ -336,17 +311,15 @@ def get_sundays(year, month):
     sundays = []
     cal = calendar.Calendar(firstweekday=calendar.MONDAY)
     for day in cal.itermonthdates(year, month):
-        if day.weekday() == 6 and day.month == month: # 6は日曜日
+        if day.weekday() == 6 and day.month == month: 
             sundays.append(day)
     return sundays
 def calc_work_and_break(val):
     """'10:00-18:00' などの文字列から実働と休憩を計算（単体用・変更なし）"""
-    # 文字列でない、または空の場合は0
     val_str = str(val).strip()
     if val_str == "" or val_str in ["nan", "None", "✖", "FALSE", "False"]:
         return 0.0, 0.0
     
-    # 記号の揺れを修正（全角～や長音をハイフンに統一）
     val_str = val_str.replace("～", "-").replace("〜", "-").replace("ー", "-").replace(" ", "")
     
     if "-" not in val_str:
@@ -354,7 +327,6 @@ def calc_work_and_break(val):
         
     try:
         start_str, end_str = val_str.split("-")
-        # 時刻形式を整える (10:0 -> 10:00)
         def fix_time(t):
             if ":" not in t: return t + ":00"
             return t
@@ -364,9 +336,8 @@ def calc_work_and_break(val):
         end_dt = datetime.strptime(fix_time(end_str), fmt)
         
         diff = (end_dt - start_dt).total_seconds() / 3600
-        if diff < 0: diff += 24 # 深夜跨ぎ対応
+        if diff < 0: diff += 24 
         
-        # 休憩ルール：6h超で0.75h、8h超で1.0h
         brk = 0.0
         if diff > 8: brk = 1.0
         elif diff > 6: brk = 0.75
@@ -377,18 +348,14 @@ def calc_work_and_break(val):
 
 def calc_work_and_break_combined(val1, val2):
     """2つの時間枠（前半・後半）を合算して正しい休憩を計算する【新関数】"""
-    # 両方の時間を個別に計算
     net1, brk1 = calc_work_and_break(val1)
     net2, brk2 = calc_work_and_break(val2)
     
-    # 総勤務時間（休憩込み）= 実働 + 休憩
     total_hours = net1 + brk1 + net2 + brk2
     
-    # 勤務時間が0なら終了
     if total_hours == 0:
         return net1, brk1, net2, brk2
     
-    # ★ 合計勤務時間から正しい休憩を再計算
     if total_hours > 8.0:
         correct_total_break = 1.0
     elif total_hours > 6.0:
@@ -396,9 +363,8 @@ def calc_work_and_break_combined(val1, val2):
     else:
         correct_total_break = 0.0
     
-    # 休憩を前半と後半に按分（勤務時間の比率で）
-    work1 = net1 + brk1  # 前半の勤務時間
-    work2 = net2 + brk2  # 後半の勤務時間
+    work1 = net1 + brk1  
+    work2 = net2 + brk2  
     
     if total_hours > 0:
         ratio1 = work1 / total_hours
@@ -407,79 +373,56 @@ def calc_work_and_break_combined(val1, val2):
     else:
         break1, break2 = 0.0, 0.0
     
-    # 実働 = 勤務時間 - 休憩
     final_net1 = round(work1 - break1, 1)
     final_net2 = round(work2 - break2, 1)
     
     return final_net1, break1, final_net2, break2
 st.set_page_config(page_title="ジョイフル シフト管理", layout="wide",page_icon="🏪")
 st.markdown('<link rel="apple-touch-icon" href="https://em-content.zobj.net/source/microsoft-teams/363/convenience-store_1f3ea.png">', unsafe_allow_html=True)
-# --- 右上のメニュー・GitHubアイコン・デプロイボタンを「力づく」で隠す ---
 st.markdown("""
     <style>
-    /* ヘッダー全体を非表示 */
     [data-testid="stHeader"] {
         display: none !important;
     }
-    /* デプロイボタン（GitHubアイコン含む）を非表示 */
     .stAppDeployButton {
         display: none !important;
     }
-    /* 右上の三本線メニューを非表示 */
     #MainMenu {
         display: none !important;
     }
-    /* フッター（Made with Streamlit）を非表示 */
     footer {
         display: none !important;
     }
-    /* アプリ全体の余白調整（ヘッダーを消した後の隙間を埋める） */
     .stApp {
         margin-top: -50px;
     }
     </style>
     """, unsafe_allow_html=True)
-# --- 30分刻みの時間リスト作成 ---
 TIME_OPTIONS = [f"{h:02d}:{m:02d}" for h in range(0, 31) for m in [0, 30]]# 24:30以降は不要なので24:00までにする
 TIME_OPTIONS = TIME_OPTIONS[:-1]
-# --- 1. スプレッドシート接続設定 ---
-# ブラウザのURLバーにある文字列をそのまま貼り付けているか確認
 MASTER_DATABASE_URL = "https://docs.google.com/spreadsheets/d/1cajpaXBr6N8ecMGTR0L9-5AJ65yuRNSpdhheU6QR44U/edit?gid=0#gid=0"
 conn = st.connection("gsheets", type=GSheetsConnection)
-# --- 準備：日付と名簿の情報を整理する ---
 
-# --- 1. 今日が何年何月かを取得（修正版） ---
 if 'view_date' not in st.session_state:
-    # 今月の1日を取得
     today_first = date.today().replace(day=1)
-    # 32日後（＝必ず来月）の1日を初期値とする
     st.session_state.view_date = (today_first + timedelta(days=32)).replace(day=1)
 
-# この v_date.year, v_date.month を使うことで、
-# 2027年になれば自動的に 2027, 2028 という数字が使われます。
 v_date = st.session_state.view_date
 year, month = v_date.year, v_date.month
 
-# 2. その月が何日まであるか調べて、列の名前（1(金)など）を作る
 num_days = calendar.monthrange(year, month)[1]
 WEEKDAYS_JP = ["月", "火", "水", "木", "金", "土", "日"]
 column_names = [f"{d}({WEEKDAYS_JP[calendar.weekday(year, month, d)]})" for d in range(1, num_days + 1)]
-# 3. スプレッドシートの「タブ名」を決める
 REQ_SHEET = f"req_{year}_{month:02}"
 
-# 4. 従業員名簿を読み込んで、全員の名前リスト（ALL_NAMES）を作る
-# ※ load_sheet_no_cache は以前作った関数を使います
 master_df = load_sheet_no_cache("staff_master", pd.DataFrame())
 if not master_df.empty:
-    # 職種アイコンと名前を合体させた「表示名」のリストを作る
     master_df['表示名'] = master_df['職種'].astype(str).str.strip() + " " + master_df.index.astype(str).str.strip()
     ALL_NAMES = master_df['表示名'].tolist()
 else:
     ALL_NAMES = []
 
-# --- 2. データの読み書き関数 ---
 def load_master():
-    # 正しい種類（型）を持った空の表を準備しておく
     empty_df = pd.DataFrame({
         "名前": pd.Series(dtype='str'),
         "職種": pd.Series(dtype='str'),
@@ -495,7 +438,6 @@ def load_master():
         df['デザート'] = df['デザート'].astype(bool)
         if df is not None and not df.empty:
             df = df.dropna(how='all')
-            # 読み込んだデータの種類を正しく変換する
             df['レジ締め'] = df['レジ締め'].map(lambda x: str(x).upper() == 'TRUE')
             df['デザート'] = df['デザート'].map(lambda x: str(x).upper() == 'TRUE')
             df['週希望'] = pd.to_numeric(df['週希望'], errors='coerce').fillna(3).astype(int)
@@ -503,19 +445,18 @@ def load_master():
         return empty_df
     except:
         return empty_df
-# データを読み込むための「道具（関数）」
 @st.cache_data(ttl=600)
 def load_sheet_cached(worksheet_name):
     try:
         df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=worksheet_name, ttl=0)
         if df is not None:
             return df
-        return None # 失敗時はNoneを返す
+        return None 
     except:
         return None
 
 def save_sheet_robust(df, worksheet_name, target_url=None):
-    """データを保存する。列名の重複エラーを回避する修正版"""
+    """保存時にインデックス（名前）が数字にならないよう強制ガードする修正版"""
     if target_url is None:
         target_url = SPREADSHEET_URL
         
@@ -536,43 +477,22 @@ def save_sheet_robust(df, worksheet_name, target_url=None):
             sh.add_worksheet(title=worksheet_name, rows="100", cols="50")
             st.info(f"✨ 新しいシート「{worksheet_name}」を作成しました。")
 
-        # 1. データのコピー
         save_df = df.copy()
 
-        # 2. 列名の重複を保存前に強制排除 (重要！)
-        # 同じ名前の列があると reset_index でエラーになるため
-        new_cols = []
-        counts = {}
-        for col in save_df.columns:
-            c_str = str(col)
-            if c_str in counts:
-                counts[c_str] += 1
-                new_cols.append(f"{c_str}_{counts[c_str]}")
-            else:
-                counts[c_str] = 0
-                new_cols.append(c_str)
-        save_df.columns = new_cols
-
-        # 3. インデックスの処理
-        # インデックス名がすでに列名にある場合、エラーを避けるためにインデックス名を一時的に変更
-        if save_df.index.name in save_df.columns:
-            save_df.index.name = "index_original"
+        if save_df.index.name is None:
+            save_df.index.name = "名前"
         
         save_df = save_df.reset_index()
 
-        # 4. 不要なシステム列の削除
-        for extra_col in ['index', 'level_0', 'index_original']:
-            if extra_col in save_df.columns:
-                # 「名前」という列が他にあるなら削除、ないならリネーム
-                if extra_col == 'index_original' and '名前' not in save_df.columns:
-                    save_df = save_df.rename(columns={extra_col: '名前'})
-                else:
-                    save_df = save_df.drop(columns=[extra_col])
-        
-        # 5. 文字列変換 (True/False対策)
+        cols_to_drop = [c for c in ["index", "level_0"] if c in save_df.columns and c != "名前"]
+        if cols_to_drop:
+            save_df = save_df.drop(columns=cols_to_drop)
+
+        save_df["名前"] = save_df["名前"].astype(str)
+        save_df = save_df[~save_df["名前"].str.match(r'^\d+$')]
+
         save_df = save_df.map(lambda x: "TRUE" if x is True else ("FALSE" if x is False else x))
         
-        # 6. 保存実行
         conn.update(spreadsheet=target_url, worksheet=worksheet_name, data=save_df)
         st.cache_data.clear()
         return True
@@ -581,7 +501,6 @@ def save_sheet_robust(df, worksheet_name, target_url=None):
         return False
 
 def save_master(df):
-    # 名前が空の行を削除
     df = df.dropna(subset=["名前"])
     if not df.empty:
         conn.update(spreadsheet=SPREADSHEET_URL, worksheet="staff_master", data=df)
@@ -590,15 +509,12 @@ def save_master(df):
     return False
 def load_confirmed_shift(sheet_name):
     try:
-        # ttl=0 で常に最新を取りに行く
         df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, ttl=0)
         if df is not None and not df.empty:
-            # 1列目が何であれインデックスにする（名前やグループ）
             df = df.set_index(df.columns[0])
             return df
         return pd.DataFrame()
     except Exception:
-        # シートが存在しない場合は空のDFを返す
         return pd.DataFrame()
 def time_to_float(time_str):
     """'10:30' -> 10.5 への変換"""
@@ -621,7 +537,6 @@ def validate_and_fix_date_columns(df, year, month):
         w_idx = calendar.weekday(year, month, d)
         date_cols.append(f"{d}({WEEKDAYS_JP[w_idx]})")
     
-    # 既存の日付列を特定
     existing_dates = {}
     for col in df.columns:
         col_str = str(col)
@@ -629,33 +544,27 @@ def validate_and_fix_date_columns(df, year, month):
         if digits and 1 <= int(digits) <= 31:
             existing_dates[int(digits)] = col
     
-    # 不足している日付列を追加
     for d in range(1, num_days + 1):
         if d not in existing_dates:
             col_name = f"{d}({WEEKDAYS_JP[calendar.weekday(year, month, d)]})"
             df[col_name] = ""  # 空列として追加
             st.warning(f"⚠️ {d}日の列が不足していたため、空列として追加しました")
     
-    # 正しい順序で列を並べ替え
     ordered_cols = ["グループ", "名前"] + date_cols
-    # 存在する列だけを抽出（安全策）
     final_cols = [c for c in ordered_cols if c in df.columns]
     return df[final_cols]
 def validate_uploaded_shift(df, year, month):
-    """アップロードされたシフトの形式を検証"""
     errors = []
     warnings = []
     
     num_days = calendar.monthrange(year, month)[1]
     
-    # 1. 列数のチェック
     expected_min_cols = 2 + num_days  # グループ + 名前 + 日付列
     if len(df.columns) < expected_min_cols:
         errors.append(f"列数が不足しています（必要: {expected_min_cols}以上, 実際: {len(df.columns)}）")
     
-    # 2. 名前列の存在チェック
     name_col_found = False
-    for col in df.columns[:3]:  # 最初の3列をチェック
+    for col in df.columns[:3]:  
         if "名前" in str(col) or df[col].astype(str).str.contains("田中|佐藤|鈴木").any():
             name_col_found = True
             break
@@ -663,26 +572,20 @@ def validate_uploaded_shift(df, year, month):
     if not name_col_found:
         warnings.append("名前列が見つかりません。1列目を名前として扱います")
     
-    # 3. 日付列のカウント
     date_pattern_cols = [c for c in df.columns if "(" in str(c) and ")" in str(c)]
     if len(date_pattern_cols) < num_days:
         warnings.append(f"日付列が不足しています（{num_days}日分必要なところ{len(date_pattern_cols)}列）")
     
-    # 4. 行数のチェック（偶数であるべき）
-    data_rows = len(df) - 2  # ヘッダー行を除く
+    data_rows = len(df) - 2 
     if data_rows % 2 != 0:
         warnings.append("データ行数が奇数です。最終行のデータが不完全な可能性があります")
     
     return errors, warnings
-# --- 3. メイン画面 ---
-# ジョイフル風カスタムCSS
 st.markdown("""
     <style>
-    /* メイン背景色 */
     .stApp {
         background-color: #FFFDF0;
     }
-    /* ボタンをジョイフルオレンジに */
     div.stButton > button:first-child {
         background-color: #FF8C00;
         color: white;
@@ -690,37 +593,28 @@ st.markdown("""
         border: none;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
-    /* ヘッダーの装飾 */
     h1 {
-        color: #E60012; /* ジョイフルレッド */
+        color: #E60012; 
         border-bottom: 3px solid #FF8C00;
     }
-    /* サイドバーの調整 */
     section[data-testid="stSidebar"] {
         background-color: #F8F8F8;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# ==========================================
-# 1. ログイン・店舗特定ロジック（修正版）
-# ==========================================
 query_params = st.query_params
 url_store_id = query_params.get("s", None)
 
-# 管理者フラグの初期化
 if 'is_global_admin' not in st.session_state:
     st.session_state.is_global_admin = False
 
-# まだどこにもログインしていない場合
 if 'spreadsheet_url' not in st.session_state and not st.session_state.is_global_admin:
     st.title("🏪 シフト管理システム")
     
-    # URLに店舗IDがあるかチェック（スタッフ用）
     target_id = url_store_id if url_store_id else None
     
     if not target_id:
-        # ID入力画面を表示
         st.markdown("### 店舗IDを入力してください")
         input_id = st.text_input("店舗ID（または管理用ID）", placeholder="例: KOKURA").upper().strip()
         
@@ -742,21 +636,15 @@ if 'spreadsheet_url' not in st.session_state and not st.session_state.is_global_
         else:
             st.stop()
 
-    # 店舗情報の検索
     try:
-        # ★ キャッシュをクリアして再取得（エラー対策）
         with st.spinner("🔍 店舗情報を検索中..."):
-            # キャッシュを一旦クリア
             st.cache_data.clear()
             
-            # 店舗データを再取得
             df_stores = get_all_stores_cached()
             
-            # デバッグ情報（問題解決後は削除可能）
             if df_stores.empty:
                 st.error("⚠️ 店舗データベースが空です。システム管理者に連絡してください。")
                 
-                # 管理者ログインへの誘導
                 st.markdown("---")
                 st.markdown("システム管理者の方は、ADMIN IDでログインしてください。")
                 
@@ -769,11 +657,9 @@ if 'spreadsheet_url' not in st.session_state and not st.session_state.is_global_
                     """)
                 st.stop()
             
-            # デバッグ：利用可能な店舗IDを表示
             available_ids = df_stores['store_id'].dropna().tolist()
             st.caption(f"🔍 デバッグ: 利用可能な店舗ID: {', '.join(available_ids)}")
             
-            # 大文字小文字を区別せずに検索
             info = df_stores[df_stores['store_id'].str.upper() == target_id.upper()]
             
             if not info.empty:
@@ -786,12 +672,10 @@ if 'spreadsheet_url' not in st.session_state and not st.session_state.is_global_
                 st.session_state.target_rate = float(s_data.get('target_rate', 0.7))
                 st.session_state.enabled_features = s_data.get('enabled_features', '')
                 
-                # パスワードの小数点対策
                 raw_pw = s_data.get('admin_pw')
                 try: st.session_state.admin_pw_fixed = str(int(float(raw_pw))).strip()
                 except: st.session_state.admin_pw_fixed = str(raw_pw).strip()
                 
-                # 開店・閉店時間を取得してスライダー用リストを作成
                 o_time = str(s_data.get('open_time', "10:00"))
                 c_time = str(s_data.get('close_time', "24:00"))
                 try:
@@ -813,7 +697,6 @@ if 'spreadsheet_url' not in st.session_state and not st.session_state.is_global_
                 st.error(f"❌ 店舗ID「{target_id}」が見つかりません。")
                 st.markdown(f"利用可能な店舗ID: {', '.join(available_ids) if available_ids else 'なし'}")
                 
-                # 再試行ボタン
                 if st.button("🔄 再検索"):
                     st.cache_data.clear()
                     st.rerun()
@@ -842,9 +725,6 @@ if 'spreadsheet_url' not in st.session_state and not st.session_state.is_global_
             st.rerun()
         
         st.stop()
-# ==========================================
-# 2. システム管理者専用画面 (Global Admin) 修正版
-# ==========================================
 if st.session_state.is_global_admin:
     st.title("⚙️ システム総合管理パネル")
     st.sidebar.title("管理メニュー")
@@ -855,9 +735,6 @@ if st.session_state.is_global_admin:
     df_stores = get_all_stores_cached()
     tab_new, tab_edit, tab_features = st.tabs(["🆕 新規店舗登録", "⚙️ 既存店舗の編集", "🔧 機能の表示設定"])
 
-    # ==========================================
-    # 新規店舗登録タブ
-    # ==========================================
     with tab_new:
         st.subheader("🆕 新しい店舗をシステムに追加")
         with st.form("add_store_form"):
@@ -867,18 +744,18 @@ if st.session_state.is_global_admin:
             new_pw = st.text_input("店長パスワード")
             
             c1, c2 = st.columns(2)
-            n_open = c1.selectbox("開店時間", TIME_OPTIONS, index=20) # デフォルト10:00
-            n_close = c2.selectbox("閉店時間", TIME_OPTIONS, index=48) # デフォルト24:00
+            n_open = c1.selectbox("開店時間", TIME_OPTIONS, index=20) 
+            n_close = c2.selectbox("閉店時間", TIME_OPTIONS, index=48) 
             
             st.markdown("---")
             st.write("▼ アイドルタイム（休憩推奨時間）の設定")
             ci1, ci2, ci3 = st.columns(3)
             with ci1:
-                n_i1s = st.selectbox("休憩1 開始", TIME_OPTIONS, index=28) # 14:00
-                n_i1e = st.selectbox("休憩1 終了", TIME_OPTIONS, index=30) # 15:00
+                n_i1s = st.selectbox("休憩1 開始", TIME_OPTIONS, index=28) 
+                n_i1e = st.selectbox("休憩1 終了", TIME_OPTIONS, index=30) 
             with ci2:
-                n_i2s = st.selectbox("休憩2 開始", TIME_OPTIONS, index=31) # 15:30
-                n_i2e = st.selectbox("休憩2 終了", TIME_OPTIONS, index=33) # 16:30
+                n_i2s = st.selectbox("休憩2 開始", TIME_OPTIONS, index=31) 
+                n_i2e = st.selectbox("休憩2 終了", TIME_OPTIONS, index=33) 
             with ci3:
                 n_i3s = st.selectbox("休憩3 開始", TIME_OPTIONS, index=0)
                 n_i3e = st.selectbox("休憩3 終了", TIME_OPTIONS, index=0)
@@ -891,12 +768,10 @@ if st.session_state.is_global_admin:
             n_rate_pct = st.number_input("目標出勤率 (1〜100%)", 1, 100, 70)
             n_rate = n_rate_pct / 100.0
             
-            # ★ 表示する機能の選択
             st.markdown("---")
             st.write("▼ この店舗で表示する機能")
             st.caption("チェックを入れた機能のみがサイドメニューに表示されます")
             
-            # 利用可能な全機能のリスト
             all_features = [
                 "確定シフト閲覧",
                 "休み希望入力", 
@@ -907,12 +782,10 @@ if st.session_state.is_global_admin:
                 "レジ締め作業"
             ]
             
-            # デフォルトで全てチェック
             n_features = {}
             for feature in all_features:
                 n_features[feature] = st.checkbox(feature, value=True, key=f"new_feature_{feature}")
             
-            # 選択された機能をカンマ区切りで保存
             n_enabled_features = ",".join([f for f, enabled in n_features.items() if enabled])
 
             if st.form_submit_button("新店舗をシステムに登録"):
@@ -939,7 +812,6 @@ if st.session_state.is_global_admin:
                     df_clean = df_stores.dropna(how='all').dropna(subset=['store_id'])
                     df_updated = pd.concat([df_clean, new_row], ignore_index=True)
                     
-                    # ★★★ store_idをインデックスに設定してから保存 ★★★
                     df_to_save = df_updated.set_index("store_id")
                     df_to_save.index.name = "store_id"
                     
@@ -948,9 +820,6 @@ if st.session_state.is_global_admin:
                         st.success(f"店舗「{new_name}」を登録しました！")
                         st.rerun()
 
-# ==========================================
-    # 既存店舗の編集タブ
-    # ==========================================
     with tab_edit:
         st.subheader("⚙️ 既存店舗の設定変更")
         if df_stores.empty:
@@ -1005,12 +874,10 @@ if st.session_state.is_global_admin:
                     e_rate_pct = st.number_input("目標出勤率 (1〜100%)", 1, 100, init_rate)
                     e_rate = e_rate_pct / 100.0
                     
-                    # ★ 表示する機能の選択
                     st.markdown("---")
                     st.write("▼ この店舗で表示する機能")
                     st.caption("チェックを入れた機能のみがサイドメニューに表示されます")
                     
-                    # 現在の設定を読み込み（カンマ区切り文字列をリストに変換）
                     raw_features = s_info.get('enabled_features', "")
                     current_features = str(raw_features).split(",") if pd.notna(raw_features) and raw_features != "" else []
                     
@@ -1027,23 +894,18 @@ if st.session_state.is_global_admin:
                     selected_feature_list = []
                     cols = st.columns(2)
                     for idx, feature in enumerate(all_features):
-                        # 設定が空の場合は全機能ON、設定がある場合は含まれているものだけON
                         default_val = feature in current_features if current_features else True
                         with cols[idx % 2]:
                             if st.checkbox(feature, value=default_val, key=f"edit_feat_{feature}"):
                                 selected_feature_list.append(feature)
                     
-                    # 保存用にカンマ区切りの文字列にする
                     e_enabled_features = ",".join(selected_feature_list)
 
                     if st.form_submit_button("設定を更新して保存"):
-                        # 1. 既存データをコピー
                         df_to_save = df_stores.copy()
                         
-                        # 2. 型エラー防止
                         df_to_save = df_to_save.astype(object)
 
-                        # 3. 更新する列のリスト（enabled_featuresを追加）
                         update_columns = [
                             'store_name', 'sheet_url', 'admin_pw', 'open_time', 'close_time', 
                             'group_list', 'skill1_name', 'skill2_name', 'target_rate',
@@ -1051,7 +913,6 @@ if st.session_state.is_global_admin:
                             'enabled_features'
                         ]
                         
-                        # 4. 更新する値のリスト（e_enabled_featuresを追加）
                         update_values = [
                             str(e_name), str(e_url), str(e_pw), str(e_open), str(e_close), 
                             str(e_groups), str(e_s1), str(e_s2), float(e_rate),
@@ -1059,17 +920,12 @@ if st.session_state.is_global_admin:
                             str(e_enabled_features)
                         ]
                         
-                        # 5. 値の代入実行
                         df_to_save.loc[df_to_save['store_id'] == target_id, update_columns] = update_values
                         
-                        # 6. 保存実行
                         if save_sheet_robust(df_to_save.set_index("store_id"), "stores", target_url=MASTER_DATABASE_URL):
                             st.cache_data.clear()
                             st.success("✅ 店舗設定と表示機能を更新しました！")
                             st.rerun()
-    # ==========================================
-    # 機能の表示設定タブ（一括管理用）
-    # ==========================================
     with tab_features:
         st.subheader("🔧 全店舗の機能表示一覧")
         st.caption("各店舗で現在有効になっている機能の一覧です")
@@ -1077,7 +933,6 @@ if st.session_state.is_global_admin:
         if df_stores.empty:
             st.write("登録されている店舗はありません。")
         else:
-            # 表示用データ作成
             display_data = []
             all_features = [
                 "確定シフト閲覧",
@@ -1097,7 +952,7 @@ if st.session_state.is_global_admin:
                 if pd.notna(features_str) and features_str:
                     enabled = features_str.split(",")
                 else:
-                    enabled = all_features.copy()  # 未設定の場合は全機能有効
+                    enabled = all_features.copy()  
                 
                 row_data = {"店舗名": f"{store_name} ({store_id})"}
                 for f in all_features:
@@ -1116,41 +971,29 @@ if st.session_state.is_global_admin:
                 st.caption("✅ = 表示中 / ❌ = 非表示")
                 st.info("💡 各店舗の機能を変更するには「既存店舗の編集」タブから行ってください。")
 
-    st.stop() # 管理者はここで終了。下の店舗用コードは実行させない。
-
-# ==========================================
-# 3. 店舗用メインメニュー
-# ==========================================
+    st.stop() 
 SPREADSHEET_URL = st.session_state.spreadsheet_url
 TIME_OPTIONS = st.session_state.store_time_options
 st.sidebar.title("メニュー")
 
-# --- ★追加：年月選択機能 ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("📅 表示・編集する年月")
 
-# セッションから現在選択中の年月を取得
 curr_v_date = st.session_state.view_date
 
-# サイドバーで選択
 sel_y = st.sidebar.selectbox("年", [curr_v_date.year - 1, curr_v_date.year, curr_v_date.year + 1], index=1, key="sb_year")
 sel_m = st.sidebar.selectbox("月", range(1, 13), index=curr_v_date.month - 1, key="sb_month")
 
-# 選択が変わった瞬間にセッションを更新してリラン
 if sel_y != curr_v_date.year or sel_m != curr_v_date.month:
     st.session_state.view_date = date(sel_y, sel_m, 1)
     st.rerun()
 
-# 現在の選択に合わせて変数を再定義（これが重要！）
 year = st.session_state.view_date.year
 month = st.session_state.view_date.month
 num_days = calendar.monthrange(year, month)[1]
 column_names = [f"{d}({WEEKDAYS_JP[calendar.weekday(year, month, d)]})" for d in range(1, num_days + 1)]
 REQ_SHEET = f"req_{year}_{month:02}"
 st.sidebar.markdown("---")
-# -------------------------
-
-# --- 1. 機能の定義とURL用IDの紐付け ---
 all_modes_config = [
     {"name": "確定シフト閲覧", "label": "📊 確定シフト閲覧", "id": "view"},
     {"name": "休み希望入力", "label": "📅 休み希望入力", "id": "off"},
@@ -1161,7 +1004,6 @@ all_modes_config = [
     {"name": "レジ締め作業", "label": "💰 レジ締め作業", "id": "reg"},
 ]
 
-# --- 2. 有効な機能のフィルタリング（修正版） ---
 enabled_features_str = st.session_state.get('enabled_features', '')
 if enabled_features_str:
     enabled_names = [n.strip() for n in enabled_features_str.split(",")]
@@ -1169,7 +1011,6 @@ if enabled_features_str:
 else:
     available_modes = all_modes_config
 
-# --- 3. URLパラメータによる初期選択モードの特定 ---
 url_m = st.query_params.get("m", "")
 default_index = 0
 for i, m in enumerate(available_modes):
@@ -1177,7 +1018,6 @@ for i, m in enumerate(available_modes):
         default_index = i
         break
 
-# --- 4. サイドバー表示 ---
 selected_label = st.sidebar.radio(
     "機能を選択", 
     [m["label"] for m in available_modes],
@@ -1185,21 +1025,15 @@ selected_label = st.sidebar.radio(
 )
 mode = next(m["name"] for m in available_modes if m["label"] == selected_label)
 
-# 管理者パスワード
 pw = st.sidebar.text_input("管理者パスワード", type="password")
 
-# --- お知らせ読み込み（決定版） ---
 try:
     raw_config_df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="config", ttl=0)
     
     if raw_config_df is not None:
         if not raw_config_df.empty:
-            # パターンA：1行目が「message」、2行目にお知らせが書いてある場合
-            # iloc[0, 0] でデータ1行目を取得
             current_notice = str(raw_config_df.iloc[0, 0])
         else:
-            # パターンB：1行目からいきなりお知らせが書いてある場合
-            # Pandasは1行目を見出しとして扱うので、columns[0] を取得
             header_val = str(raw_config_df.columns[0])
             if "Unnamed" not in header_val and header_val != "message":
                 current_notice = header_val
@@ -1211,11 +1045,8 @@ except:
     current_notice = "お知らせはありません"
 
 st.info(f" 📢 お知らせ： {current_notice}")
-# データのロード
-# プログラム中盤の ALL_NAMES を作る部分
 master_df = load_master()
 if not master_df.empty:
-    # 以前は 職種 + 名前 でしたが、シンプルに「名前」だけにします
     ALL_NAMES = master_df["名前"].astype(str).str.strip().tolist()
 else:
     ALL_NAMES = []
@@ -1227,7 +1058,6 @@ if mode == "従業員名簿管理":
     if is_admin:
         st.success("✅ 管理者モードで編集可能です")
         
-        # --- お知らせの編集 ---
         with st.expander("📢 お知らせの編集", expanded=False):
             new_notice = st.text_area(
                 "スタッフ全員に表示するメッセージを入力してください", 
@@ -1236,14 +1066,12 @@ if mode == "従業員名簿管理":
             )
             if st.button("📢 お知らせを更新する", use_container_width=True):
                 updated_notice_df = pd.DataFrame([[new_notice]], columns=["message"])
-                if save_sheet_robust(updated_notice_df, "config"): # 関数名は環境に合わせて調整してください
+                if save_sheet_robust(updated_notice_df, "config"): 
                     st.success("お知らせを更新しました！")
                     st.rerun()
         
         st.caption(f"現在の登録グループ： 【{' / '.join(st.session_state.group_options)}】")
 
-        # --- ★重要：名簿編集をフォームで囲む ---
-        # これにより、保存ボタンを押すまで「カクつき（再計算）」が発生しなくなります
         with st.form("master_edit_form"):
             st.subheader("📝 名簿の編集")
             st.info("💡 編集が終わったら、一番下の「💾 名簿を確定して保存」を押してください。")
@@ -1270,24 +1098,20 @@ if mode == "従業員名簿管理":
                 use_container_width=True,
                 num_rows="dynamic",
                 height=500,
-                hide_index=True, # 左側の数字を非表示
+                hide_index=True, 
                 key="master_editor_in_form"
             )
             
-            # フォーム専用の送信ボタン
             submit_save = st.form_submit_button("💾 名簿を確定して保存する", use_container_width=True, type="primary")
             
             if submit_save:
-                # 名前が空の行を削除するガードレール
                 clean_df = edited_df.dropna(subset=["名前"])
                 if save_master(clean_df):
                     st.success("✅ 名簿をスプレッドシートに保存しました！")
-                    # キャッシュをクリアして確実に最新を読み込む
                     st.cache_data.clear()
                     time.sleep(1)
                     st.rerun()
         
-        # ========== 取扱説明書（管理者用） ==========
         st.markdown("---")
         with st.expander("📖 【店長用】システム取扱説明書（マニュアル）", expanded=False):
             st.markdown("""
@@ -1369,10 +1193,8 @@ if mode == "従業員名簿管理":
             ))
     
     else:
-        # ========== 一般スタッフモード（閲覧のみ） ==========
         st.info("🔒 編集するには左側のメニューで管理者パスワードを入力してください。")
         
-        # お知らせ表示
         if current_notice and current_notice != "お知らせはありません":
             st.info(f"📢 お知らせ： {current_notice}")
         
@@ -1381,17 +1203,14 @@ if mode == "従業員名簿管理":
         if master_df.empty:
             st.warning("名簿データがありません。")
         else:
-            # 表示用に列を整理
             display_cols = ["名前", "グループ", "週希望"]
             if st.session_state.skill1_name in master_df.columns:
                 display_cols.append(st.session_state.skill1_name)
             if st.session_state.skill2_name in master_df.columns:
                 display_cols.append(st.session_state.skill2_name)
             
-            # 存在する列のみを表示
             available_cols = [c for c in display_cols if c in master_df.columns]
             
-            # チェックボックスを見やすく表示
             view_df = master_df[available_cols].copy()
             
             st.dataframe(
@@ -1401,17 +1220,14 @@ if mode == "従業員名簿管理":
                 hide_index=True
             )
             
-            # 人数カウント
             st.caption(f"登録人数: {len(view_df)}名")
             
-            # グループ別人数
             if "グループ" in view_df.columns:
                 group_counts = view_df["グループ"].value_counts()
                 st.write("**グループ別人数:**")
                 for g, c in group_counts.items():
                     st.write(f"- {g}: {c}名")
         
-        # スタッフ向け簡易マニュアル
         st.markdown("---")
         with st.expander("📖 スタッフ向け使い方ガイド", expanded=False):
             st.markdown("""
@@ -1447,7 +1263,6 @@ if mode == "休み希望入力":
     
     state_key = f"req_data_{year}_{month}"
 
-    # 1. データの読み込みと初期化
     if state_key not in st.session_state:
         with st.spinner("最新データを読み込み中..."):
             try:
@@ -1455,22 +1270,23 @@ if mode == "休み希望入力":
                 
                 if r_raw is None or r_raw.empty:
                     df = pd.DataFrame(False, index=ALL_NAMES, columns=column_names)
+                    df.index.name = "名前" 
                 else:
                     df = r_raw.drop_duplicates(subset=r_raw.columns[0]).set_index(r_raw.columns[0])
                     df.index = df.index.astype(str).str.strip()
                     df = df.reindex(index=ALL_NAMES, columns=column_names).fillna(False)
-                    df = df.map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0", "TRUE.0"])
+                    df.index.name = "名前" 
+                    df = df.map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0", "TRUE.0", "YES"])
             except Exception:
                 df = pd.DataFrame(False, index=ALL_NAMES, columns=column_names)
+                df.index.name = "名前"
 
             st.session_state[state_key] = df
 
     display_df = st.session_state[state_key]
 
-    # 2. 画面レイアウト
     col_btn, col_view = st.columns([1, 6])
 
-    # --- 右側の列：全体の状況表示・一括編集（管理者用） ---
     with col_view:
         config = {col: st.column_config.CheckboxColumn(col, width="small") for col in column_names}
 
@@ -1495,7 +1311,6 @@ if mode == "休み希望入力":
             st.subheader("😪全体の休み状況")
             st.data_editor(display_df, column_config=config, use_container_width=True, height=600, disabled=True)
 
-    # --- 左側の列：個人入力への誘導ボタン ---
     with col_btn:
         st.write("自分の名前を押すと下の方に入力画面が現れるよ！⇩")
         st.markdown("""
@@ -1514,19 +1329,15 @@ if mode == "休み希望入力":
             if st.button(f"{name}", key=f"sel_{name}", use_container_width=True):
                 st.session_state.editing_user = name
 
-    # --- 3. 個別入力エリア（名前ボタンが押されたら出現） ---
-    # ★★★ 修正：editing_user が存在し、かつ None でない、かつ display_df に存在する名前かチェック ★★★
     if "editing_user" in st.session_state and st.session_state.editing_user is not None:
         user = st.session_state.editing_user
         
-        # ★★★ 追加：user が display_df のインデックスに存在するか確認 ★★★
         if user not in display_df.index:
             st.error(f"❌ {user} さんは名簿に登録されていません。")
             # 不正な状態をクリア
             del st.session_state.editing_user
             st.stop()
         
-        # --- 強力なグリッドCSS ---
         st.markdown("""
             <style>
             [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
@@ -1559,14 +1370,12 @@ if mode == "休み希望入力":
             </style>
         """, unsafe_allow_html=True)
 
-        # 自動スクロール
         st.markdown('<div id="scroll_target"></div>', unsafe_allow_html=True)
         components.html(f"<script>window.parent.document.getElementById('scroll_target').scrollIntoView({{behavior: 'smooth', block: 'start'}});</script>", height=0)
 
         st.divider()
         st.subheader(f"📅 {user} さんの希望")
 
-        # 1. データ準備
         try:
             raw_user_data = display_df.loc[user].copy()
             user_status_clean = {k: (str(v).upper().strip() in ["TRUE", "1", "1.0", "YES"]) for k, v in raw_user_data.items()}
@@ -1575,13 +1384,11 @@ if mode == "休み希望入力":
             del st.session_state.editing_user
             st.stop()
 
-        # 2. フォーム
         with st.form(key=f"ultra_tight_cal_{user}"):
             calendar.setfirstweekday(calendar.SUNDAY)
             cal = calendar.monthcalendar(year, month)
             weekdays_jp = ["日", "月", "火", "水", "木", "金", "土"]
             
-            # 曜日ヘッダー
             h_cols = st.columns(7)
             for i, label in enumerate(weekdays_jp):
                 color = "#333"
@@ -1591,7 +1398,6 @@ if mode == "休み希望入力":
 
             new_updates = {}
 
-            # カレンダー日付
             for week in cal:
                 cols = st.columns(7)
                 for i, day in enumerate(week):
@@ -1616,36 +1422,59 @@ if mode == "休み希望入力":
             with col_cancel:
                 cancel_btn = st.form_submit_button("✖ 閉じる", use_container_width=True)
 
-# 3. 保存ロジック
         if submit_btn:
             with st.spinner("保存中..."):
                 try:
-                    # --- ここを修正：読み込みに失敗しても空のデータを作る ---
-                    try:
-                        latest_all_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=REQ_SHEET, ttl=0)
-                    except:
-                        latest_all_raw = None # 存在しない場合はNone
+                    success = False
+                    
+                    raw_gc = None
+                    if hasattr(conn, "_client"): raw_gc = conn._client
+                    elif hasattr(conn, "client") and hasattr(conn.client, "_client"): raw_gc = conn.client._client
+                    
+                    if raw_gc:
+                        try:
+                            sh = raw_gc.open_by_url(SPREADSHEET_URL)
+                            ws = sh.worksheet(REQ_SHEET)
+                            
+                            cell = ws.find(user, in_column=1)
+                            if cell:
+                                row_vals = ["TRUE" if new_updates.get(col, False) else "FALSE" for col in column_names]
+                                
+                                def get_col_letter(n):
+                                    return chr(64 + n) if n <= 26 else "A" + chr(64 + n - 26)
+                                end_col = get_col_letter(len(column_names) + 1)
+                                
+                                range_name = f"B{cell.row}:{end_col}{cell.row}"
+                                ws.update(range_name, [row_vals])
+                                success = True
+                        except:
+                            success = False
 
-                    if latest_all_raw is not None and not latest_all_raw.empty:
-                        # 既存データがある場合
-                        latest_all_indexed = latest_all_raw.drop_duplicates(subset=latest_all_raw.columns[0]).set_index(latest_all_raw.columns[0])
-                        latest_all_indexed.index = latest_all_indexed.index.astype(str).str.strip()
-                        latest_all_indexed = latest_all_indexed.reindex(columns=column_names).fillna(False)
-                        latest_all_indexed = latest_all_indexed.map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0", "YES"])
-                    else:
-                        # まだシートがない場合は、現在の画面のデータ（display_df）を土台にする
-                        latest_all_indexed = display_df.copy()
+                    if not success:
+                        try:
+                            latest_all_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=REQ_SHEET, ttl=0)
+                        except:
+                            latest_all_raw = None
 
-                    # 編集中のユーザーのデータを更新
-                    latest_all_indexed.loc[user] = pd.Series(new_updates)
+                        if latest_all_raw is not None and not latest_all_raw.empty:
+                            latest_all_indexed = latest_all_raw.drop_duplicates(subset=latest_all_raw.columns[0]).set_index(latest_all_raw.columns[0])
+                            latest_all_indexed.index = latest_all_indexed.index.astype(str).str.strip()
+                            latest_all_indexed = latest_all_indexed.reindex(columns=column_names).fillna(False)
+                            latest_all_indexed = latest_all_indexed.map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0", "YES"])
+                        else:
+                            latest_all_indexed = display_df.copy()
 
-                    # 保存実行（ここでシートがなければ作成されます）
-                    if save_sheet_robust(latest_all_indexed, REQ_SHEET):
-                        st.session_state[state_key] = latest_all_indexed 
+                        latest_all_indexed.loc[user] = pd.Series(new_updates)
+                        if save_sheet_robust(latest_all_indexed, REQ_SHEET):
+                            success = True
+
+                    if success:
+                        st.session_state[state_key].loc[user] = pd.Series(new_updates)
                         del st.session_state.editing_user 
                         st.success(f"✅ 保存完了")
                         time.sleep(0.5)
                         st.rerun()
+                        
                 except Exception as e:
                     st.error(f"保存エラー詳細: {e}")
 
@@ -1694,34 +1523,28 @@ elif mode == "シフト自動生成（案）":
         st.session_state.last_generated_df = None
     if "last_shortage_alerts" not in st.session_state:
         st.session_state.last_shortage_alerts = []
-    # --- 0. 祝日データの取得 ---
     current_holidays = get_month_holidays_list(year, month)
     holiday_days = [h[0] for h in current_holidays]
     
     holidays = get_month_holidays_list(year, month)
 
-    # ★★★ 保存データの読み込み ★★★
     stored_df = load_sheet_no_cache("config_times", pd.DataFrame())
     stored_times = stored_df.to_dict('index') if not stored_df.empty else {}
     
-    # チェックボックスのデフォルト値
     transfer_baito_default = str(stored_times.get("transfer_baito_to_staff", {}).get("start", "True")).strip().lower() == "true"
     merge_staff_default = str(stored_times.get("merge_staff_shifts", {}).get("start", "True")).strip().lower() == "true"
     
-    # 目標時間のデフォルト
     if "monthly_target_hours" in stored_times:
         monthly_target_default = float(stored_times["monthly_target_hours"].get("start", 160))
     else:
         monthly_target_default = 160.0
     
-    # 個人別目標のデフォルト
     w_targets_default = {}
     for key, val in stored_times.items():
         if key.startswith("w_target_"):
             name = key.replace("w_target_", "")
             w_targets_default[name] = float(val.get("start", 160))
     
-    # 必要人数のデフォルト
     def get_default_count(key, fallback):
         return int(stored_times.get(key, {}).get("start", fallback))
     
@@ -1735,13 +1558,8 @@ elif mode == "シフト自動生成（案）":
         "h_n_we": get_default_count("staff_count_we_hn", 4),
         "k_n_we": get_default_count("staff_count_we_kn", 4),
     }
-
-    # ==========================================
-    # ★ 設定エリア全体をフラグメント化 ★
-    # ==========================================
     @st.fragment
     def all_settings_fragment():
-        # --- ① 基本設定 ---
         st.markdown("### ① 基本の必要人数と目標時間")
         
         col_wd, col_we = st.columns(2)
@@ -1816,19 +1634,16 @@ elif mode == "シフト自動生成（案）":
                     s_kn = c5.number_input(f"K夜", 0, 20, k_n_we, key=f"sp_kn_{d}")
                     special_configs[d] = {"h_d": s_hd, "k_d": s_kd, "h_n": s_hn, "k_n": s_kn}
         
-        # --- ③ 詳細な枠時間の設定 ---
         st.markdown("---")
         st.markdown("### ③ 詳細な枠時間の設定（30分刻み）")
         st.write("各ポジションの勤務時間を設定してください。バーを動かすと下の人時が即座に更新されます。")
 
-        # タブの作成もフラグメント内に
         tab_titles = ["🚃 平日", "🌞 金土日祝"] + [f"⭐ {d}日" for d in sorted(selected_special_days)]
         all_tabs = st.tabs(tab_titles)
         
         all_settings_to_save = []
         slot_data_map = {}
 
-        # --- 平日 ---
         with all_tabs[0]:
             st.subheader("平日")
             wd_hd = []
@@ -1865,7 +1680,6 @@ elif mode == "シフト自動生成（案）":
 
             slot_data_map["weekday"] = {"hd": wd_hd, "kd": wd_kd, "hn": wd_hn, "kn": wd_kn}
 
-        # --- 金土日祝 ---
         with all_tabs[1]:
             st.subheader("金土日祝")
             we_hd = []
@@ -1902,7 +1716,6 @@ elif mode == "シフト自動生成（案）":
 
             slot_data_map["weekend"] = {"hd": we_hd, "kd": we_kd, "hn": we_hn, "kn": we_kn}
 
-        # --- 特定日 ---
         for idx, d in enumerate(sorted(selected_special_days)):
             with all_tabs[idx+2]:
                 st.subheader(f"{d}日")
@@ -1937,62 +1750,51 @@ elif mode == "シフト自動生成（案）":
                     all_settings_to_save.append({"key": k, "start": t[0], "end": t[1]})
                 slot_data_map[d] = {"hd": s_hd, "kd": s_kd, "hn": s_hn, "kn": s_kn}
 
-# --- リアルタイム人時プレビュー（月-木 vs 金-日・祝） ---
         def get_month_stats(y, m):
             """月の日数を平日(月-木)と週末祝日(金-日・祝)に分類"""
             h_list = [h[0] for h in get_month_holidays_list(y, m)]
-            cal = calendar.Calendar(firstweekday=6) # 日曜始まり
-            wd_total = 0 # 月-木
-            we_total = 0 # 金-日・祝
+            cal = calendar.Calendar(firstweekday=6) 
+            wd_total = 0 
+            we_total = 0 
             for day_num, d_week in cal.itermonthdays2(y, m):
                 if day_num == 0: continue
-                # d_week: 0=月, 1=火, 2=水, 3=木, 4=金, 5=土, 6=日
-                # 4以上（金・土・日）または祝日リストにある場合を WE とする
                 if d_week >= 4 or day_num in h_list:
                     we_total += 1
                 else:
                     wd_total += 1
             return wd_total, we_total
 
-        # 1. & 2. 基礎日数の算出
         wd_cnt, we_cnt = get_month_stats(year, month)
         
-        # 3. 特定日を除外した「正味の日数（Ho, Ko）」を算出
         wd_special_count = 0
         we_special_count = 0
         h_list_integers = [h[0] for h in get_month_holidays_list(year, month)]
         
         for d in selected_special_days:
-            # 特定日の本来の曜日を確認
             d_weekday = calendar.weekday(year, month, d)
-            # 本来金〜日(4-6) または 祝日なら WE、それ以外なら WD
             if d_weekday >= 4 or d in h_list_integers:
                 we_special_count += 1
             else:
                 wd_special_count += 1
         
-        pure_wd = wd_cnt - wd_special_count # これが Ho (特定日を除いた平日)
-        pure_we = we_cnt - we_special_count # これが Ko (特定日を除いた土日祝)
+        pure_wd = wd_cnt - wd_special_count 
+        pure_we = we_cnt - we_special_count 
 
         def calc_pos_hours(slots):
             """手順4 & 5: バーの長さから実働(休憩差引後)を合計算出"""
             total = 0.0
             for slot in slots:
                 if "-" in slot:
-                    # 拘束時間から休憩を自動で引く既存関数を使用
                     net, _ = calc_work_and_break(slot)
                     total += net
             return total
 
-        # 4. 平日(月-木)の1日あたりの合計実働 (hb)
         wd_h = (calc_pos_hours(wd_hd) + calc_pos_hours(wd_kd) +
                 calc_pos_hours(wd_hn) + calc_pos_hours(wd_kn))
         
-        # 5. 土日祝(金-日・祝)の1日あたりの合計実働 (kb)
         we_h = (calc_pos_hours(we_hd) + calc_pos_hours(we_kd) +
                 calc_pos_hours(we_hn) + calc_pos_hours(we_kn))
 
-        # 特定日それぞれの実働合計 (Σ Tb)
         special_h_sum = 0.0
         for d in selected_special_days:
             if d in slot_data_map:
@@ -2001,21 +1803,14 @@ elif mode == "シフト自動生成（案）":
                              calc_pos_hours(sp["hn"]) + calc_pos_hours(sp["kn"]))
                 special_h_sum += day_total
 
-        # 6. & 7. 総人時の合算
         total_labor = (wd_h * pure_wd) + (we_h * pure_we) + special_h_sum
 
-        # --- UI表示 ---
         st.info(f"📊 この設定での**概算総人時（休憩差引後）**: **{total_labor:.2f} 時間**")
         st.caption(f"内訳: 月-木 {pure_wd}日 × {wd_h:.1f}h + 金土日祝 {pure_we}日 × {we_h:.1f}h + 特定日 {len(selected_special_days)}日分")
-
-        # --- 保存リストの構築（全てのUI設定を網羅） ---
-        # スライダー設定は既に all_settings_to_save に追加済みと仮定
-        # それ以外のパラメータを追加
         all_settings_to_save.append({"key": "monthly_target_hours", "start": str(monthly_target_default), "end": ""})
         for name, target in w_individual_targets.items():
             all_settings_to_save.append({"key": f"w_target_{name}", "start": str(target), "end": ""})
         
-        # 人数設定の保存
         counts_to_save = {
             "staff_count_wd_hd": h_d_wd, "staff_count_wd_kd": k_d_wd, "staff_count_wd_hn": h_n_wd, "staff_count_wd_kn": k_n_wd,
             "staff_count_we_hd": h_d_we, "staff_count_we_kd": k_d_we, "staff_count_we_hn": h_n_we, "staff_count_we_kn": k_n_we,
@@ -2024,12 +1819,9 @@ elif mode == "シフト自動生成（案）":
         for k, v in counts_to_save.items():
             all_settings_to_save.append({"key": k, "start": str(v), "end": ""})
 
-        # --- 保存ボタン（フラグメント内） ---
         st.markdown("---")
         if st.button("💾 デフォルトとして保存", use_container_width=True, type="primary"):
-            # 現在の設定を保存
             save_sheet_robust(pd.DataFrame(all_settings_to_save).set_index("key"), "config_times")
-            # 特定日の構成を保存
             sp_save_data = []
             for d, c in special_configs.items():
                 sp_save_data.append({"year": year, "month": month, "day": d, **c})
@@ -2040,14 +1832,11 @@ elif mode == "シフト自動生成（案）":
             time.sleep(1)
             st.rerun()
 
-        # セッションに保存（外部の生成ボタン用）
         st.session_state["_slot_data_map"] = slot_data_map
         st.session_state["_all_settings_to_save"] = all_settings_to_save
 
-    # フラグメントを実行
     all_settings_fragment()
 
-    # --- フラグメントの外で、セッションから最新データを取り出す ---
     h_d_wd = st.session_state.get("h_d_wd", staff_count_defaults["h_d_wd"])
     k_d_wd = st.session_state.get("k_d_wd", staff_count_defaults["k_d_wd"])
     h_n_wd = st.session_state.get("h_n_wd", staff_count_defaults["h_n_wd"])
@@ -2062,13 +1851,11 @@ elif mode == "シフト自動生成（案）":
     selected_special_days = st.session_state.get("special_days_select", [])
     slot_data_map = st.session_state.get("_slot_data_map", {})
     
-    # 社員別目標時間をセッションから復元
     w_individual_targets = {}
     if not master_df.empty:
         for name in master_df[master_df["グループ"] == "W"]["名前"].tolist():
             w_individual_targets[name] = st.session_state.get(f"w_target_{name}", monthly_target_default)
 
-    # 特定日設定をセッションから復元
     special_configs = {}
     for d in selected_special_days:
         special_configs[d] = {
@@ -2078,16 +1865,13 @@ elif mode == "シフト自動生成（案）":
             "k_n": st.session_state.get(f"sp_kn_{d}", k_n_we)
         }
 
-# ★★★ フォームの外 ★★★
     st.markdown("---")
-    # next_month ではなく month を使う
     st.markdown(f"#### 📅 {month}月の祝日と行事")
     if holidays:
         st.warning(" / ".join([f"**{h[0]}日**: {h[1]}" for h in holidays]))
     else:
         st.write("祝日はありません。")
 
-    # next_year, next_month ではなく year, month を使う
     local_events = get_kitakyushu_events(year, month)
     if local_events:
         event_text = " / ".join([f"🚩 **{e[0]}日**: {e[1]}" for e in local_events])
@@ -2099,17 +1883,14 @@ elif mode == "シフト自動生成（案）":
     st.markdown("---")
     gen_button = st.button("🤖 シフトを生成（約30秒）", use_container_width=True)
 
-# --- 2. 生成ロジック ---
     if gen_button:
         df_stores_all = get_all_stores_cached()
         s_data = df_stores_all[df_stores_all['sheet_url'] == SPREADSHEET_URL].iloc[0]
         
-        # --- データの準備 ---
         progress_bar = st.progress(0)
         status_text = st.empty()
         w_staff_list = []
         if not master_df.empty:
-        # グループが「W」の人を抽出してリストにする
             w_staff_list = master_df[master_df["グループ"] == "W"]["名前"].tolist()
         w_names = [str(n).strip() for n in w_staff_list]
         def recalc_all_w_hours(df, w_names):
@@ -2125,13 +1906,11 @@ elif mode == "シフト自動生成（案）":
                                 net += n_net
                 hours[name] = round(net, 1)
             return hours
-        # ★ 10回シミュレーションの初期設定
         NUM_TRIALS = 10  
         min_score = 999999  
-        final_best_df = None  # ループ内で一番良かったものを入れる箱
+        final_best_df = None  
         final_best_alerts = []
 
-        # 休み希望データの読み込み（徹底掃除版）
         req_load_raw = load_sheet_cached(REQ_SHEET)
         if req_load_raw is None or req_load_raw.empty:
             req_load = pd.DataFrame(False, index=ALL_NAMES, columns=column_names)
@@ -2146,7 +1925,6 @@ elif mode == "シフト自動生成（案）":
         num_weeks = num_days / 7.0
         t_rate = st.session_state.get('target_rate', 0.7)
 
-        # スタッフの目標日数計算
         staff_goals = {}
         for _, row in master_df.iterrows():
             s_name = str(row.get("名前", "")).strip()
@@ -2154,17 +1932,14 @@ elif mode == "シフト自動生成（案）":
             v_req = pd.to_numeric(row.get("週希望"), errors='coerce')
             staff_goals[s_name] = max(0, int(v_req * num_weeks * t_rate)) if pd.notna(v_req) else 0
 
-        # --- シミュレーションループ開始 ---
         for trial_idx in range(NUM_TRIALS):
             status_text.text(f"シミュレーション {trial_idx + 1}/{NUM_TRIALS} 枚目を計算中...")
             
-            # --- 2行化のための名前リスト作成 ---
             EXTENDED_NAMES = []
             for n in ALL_NAMES:
                 EXTENDED_NAMES.append(f"{n}")
                 EXTENDED_NAMES.append(f"{n} ")
-            st.session_state.current_extended_names = EXTENDED_NAMES # 保存！
-            # ★★★ コマIDの作成（slot_memory） ★★★
+            st.session_state.current_extended_names = EXTENDED_NAMES 
             slot_memory = {}
             for day_idx, col in enumerate(column_names):
                 d = day_idx + 1
@@ -2188,54 +1963,41 @@ elif mode == "シフト自動生成（案）":
                             "index": i,
                             "assigned_to": None
                         }
-           # 表の初期化（EXTENDED_NAMESを使用）
             trial_df = pd.DataFrame("", index=EXTENDED_NAMES, columns=column_names)
             trial_shortage_count, trial_alerts = 0, []
             
-            # 累積データ（1ヶ月通してカウント）のリセット
             cumulative_counts = {str(n).strip(): 0 for n in ALL_NAMES}
             consecutive_days = {str(n).strip(): 0 for n in ALL_NAMES}
 
-            # 全スタッフに休み印をあらかじめ印字
             for name in ALL_NAMES:
                 n_clean = str(name).strip()
                 for col in column_names:
-                    # 名前が一致することを確認して参照
                     if req_load.at[n_clean, col]:
                         trial_df.at[name, col] = "✖"
 
-            # --- 3. 1日から末日まで1日ずつ累積で計算 ---
             for day_idx, col in enumerate(column_names):
                 assigned_today = []
                 d = day_idx + 1
                 d_idx = calendar.weekday(year, month, d)
                 
-                # --- 動的なスロット決定ロジック（祝日・特定日対応） ---
                 if d in selected_special_days:
                     target_slots = slot_data_map.get(d)
-                elif d_idx >= 4 or d in holiday_days: # 金土日 or 祝日
+                elif d_idx >= 4 or d in holiday_days: 
                     target_slots = slot_data_map.get("weekend")
                 else:
                     target_slots = slot_data_map.get("weekday")
                 
-                # 万が一スロットが取得できなかった場合のガード
                 if target_slots is None:
                     continue
 
-                # (スコア計算と割り当てロジックは既存通り...)
-# --- scoresの計算（0日設定対応版） ---
                 scores = {}
                 for name in ALL_NAMES:
-                    # 目標出勤日数を取得（デフォルト0にする）
                     goal = staff_goals.get(name, 0)
                     
                     if goal > 0:
-                        # 通常の計算
                         progress_ratio = cumulative_counts[name] / goal
                         unmet_score = (1.0 - progress_ratio) * 100
                     else:
-                        # 目標が0日の場合、優先度を大幅に下げる
-                        # これにより、他に人がいない時だけ選ばれるようになります
                         unmet_score = -500 
 
                     rarity_score = off_req_counts.get(name, 0) * 3
@@ -2244,33 +2006,25 @@ elif mode == "シフト自動生成（案）":
                     
                     scores[name] = unmet_score + rarity_score - penalty + random.uniform(0, 10)
 
-# --- get_priority_poolの定義（週0の人を完全に除外する修正版） ---
                 def get_priority_pool(group_name, filter_skill=None):
                     pool = []
                     for _, row in master_df.iterrows():
                         name = str(row["名前"]).strip()
                         
-                        # 【最重要】目標出勤日数が 0 の人は、候補リストにすら入れない
                         if staff_goals.get(name, 0) == 0:
                             continue
                             
-                        # 休み希望、または本日すでに1枠入っている人はスキップ
                         if req_load.at[name, col] or name in assigned_today:
                             continue
                         
-                        # グループ判定（該当グループ、または全対応のWグループ）
                         if row["グループ"] == group_name or row["グループ"] == "W":
-                            # スキル判定（デザートやレジ締めが必要な場合）
                             if filter_skill and not row.get(filter_skill, False):
                                 continue
                                 
-                            # ここまで残った人だけを候補者とする
                             pool.append({"名前": name, "スコア": scores.get(name, -999)})
                     
-                    # スコアが高い順に並び替え
                     pool.sort(key=lambda x: x["スコア"], reverse=True)
                     return [p["名前"] for p in pool]
-# 割り当て
                 for g_code, p_name, key in [("HD","H昼","hd"),("KD","K昼","kd"),("HN","H夜","hn"),("KN","K夜","kn")]:
                     skill = "デザート" if g_code=="HD" else "レジ締め" if g_code=="HN" else None
                     for i, slot_time in enumerate(target_slots[key]):
@@ -2278,19 +2032,14 @@ elif mode == "シフト自動生成（案）":
                         if pool:
                             picked = pool[0]
                             
-                            # --- 【重要】ここで時間を分割する ---
-                            # s_data はログイン時に取得した店舗情報
                             first_part, second_part = get_split_shift(slot_time, s_data)
                             
-                            # 1行目（田中）に前半を書き込む
                             trial_df.at[picked, col] = first_part
-                            # ★ スロットメモリに記録
                             slot_id = f"{d}_{key}_{i}"
                             if slot_id in slot_memory:
                                 slot_memory[slot_id]["assigned_to"] = picked
                                 slot_memory[slot_id]["part1"] = first_part
                                 slot_memory[slot_id]["part2"] = second_part if second_part else ""
-                            # 2行目（田中 ）に後半を書き込む（分割された場合のみ）
                             if second_part:
                                 trial_df.at[f"{picked} ", col] = second_part
                             
@@ -2302,48 +2051,36 @@ elif mode == "シフト自動生成（案）":
                             trial_alerts.append(f"{d}日:{p_name}欠員")
                 for name in ALL_NAMES:
                     if name not in assigned_today: consecutive_days[name] = 0
-# --- ここから書き換え ---
             trial_df.attrs['slot_memory'] = slot_memory
             
-            # --- 1回分のパズルが完成した直後に採点を行う ---
-            # 1. 欠員ペナルティ
             shortage_penalty = trial_shortage_count * 100
             
-            # 2. W労働時間誤差ペナルティ（目標168hとのズレを計算）
             current_w_hours = recalc_all_w_hours(trial_df, w_names)
             w_error_penalty = 0
             for name in w_names:
                 target = w_individual_targets.get(name, 168.0)
                 actual = current_w_hours.get(name, 0.0)
-                w_error_penalty += abs(actual - target) * 2 # 1時間のズレにつき2点
+                w_error_penalty += abs(actual - target) * 2 
 
-            # 総合スコア（低いほど良い案）
             trial_total_score = shortage_penalty + w_error_penalty
 
-            # もし今までの最高記録（min_score）よりスコアが低ければ保存
             if trial_total_score < min_score:
                 min_score = trial_total_score
-                final_best_df = trial_df.copy() # copy()で状態を確保
+                final_best_df = trial_df.copy() 
                 final_best_alerts = trial_alerts
-                # メモリ情報も確保
                 final_best_df.attrs['slot_memory'] = slot_memory.copy()
             
             progress_bar.progress((trial_idx + 1) / NUM_TRIALS)
 
-        # --- ここで 10回(for) のループが終了 ---
 
-        # 全試行の中で最も良かった案を採用案にする
         if final_best_df is not None:
             best_overall_df = final_best_df
             st.session_state.last_shortage_alerts = final_best_alerts
         else:
             st.error("シフト生成に失敗しました。設定を見直してください。")
             st.stop()
-        # --- 書き換えここまで ---
 
-        # ★★★ チェックボックスの状態で分岐 ★★★
         if transfer_baito_to_staff or merge_staff_shifts:
-            # --- 1. 2行シフトを1行に統合 ---
             for name in best_overall_df.index:
                 if name.endswith(" "): continue
                 name2 = f"{name} "
@@ -2355,10 +2092,6 @@ elif mode == "シフト自動生成（案）":
                         best_overall_df.at[name, col] = f"{v1.split('-')[0]}-{v2.split('-')[1]}"
                         best_overall_df.at[name2, col] = ""
 
-        # ==========================================
-        # ★★★ ステップ3：Wの短時間シフトを延長 ★★★
-        # ==========================================
-
         extend_log = []
         extend_count = 0
 
@@ -2369,16 +2102,14 @@ elif mode == "シフト自動生成（案）":
                     v1 = str(best_overall_df.at[w_name, col]).strip() if w_name in best_overall_df.index else ""
                     v2 = str(best_overall_df.at[name2, col]).strip() if name2 in best_overall_df.index else ""
 
-                    # 1行目のみシフトがある → 終了時間を延長
                     if "-" in v1 and v2 in ["", "nan", "None"]:
                         try:
                             start1 = v1.split("-")[0]
                             end1 = v1.split("-")[1]
                             e1 = time_to_float(end1)
 
-                            # 午前シフト（17時前に終わる）→ 18時まで延長
                             if e1 < 17:
-                                new_end = min(e1 + 3, 18)  # 最大3時間延長、18時まで
+                                new_end = min(e1 + 3, 18)  
                                 new_end_str = float_to_time(new_end)
                                 extended = f"{start1}-{new_end_str}"
 
@@ -2393,14 +2124,12 @@ elif mode == "シフト自動生成（案）":
                         except:
                             pass
 
-                    # 2行目のみシフトがある → 開始時間を早める
                     if v1 in ["", "nan", "None"] and "-" in v2:
                         try:
                             start2 = v2.split("-")[0]
                             end2 = v2.split("-")[1]
                             s2 = time_to_float(start2)
 
-                            # 夜シフト（15時以降開始）→ 14時まで早める
                             if s2 > 15:
                                 new_start = max(s2 - 3, 14)
                                 new_start_str = float_to_time(new_start)
@@ -2416,27 +2145,18 @@ elif mode == "シフト自動生成（案）":
                                     extend_count += 1
                         except:
                             pass
-# ==========================================
-        # ★★★ ステップ4：Wの合計実働 To の計算 ★★★
-        # ==========================================
-        # 1. 基準となる目標時間を取得（UIの入力を最優先）
-        # フラグメント内の number_input の key は "f_monthly_target" などにしているか確認してください
-        monthly_target_hours = st.session_state.get('monthly_target_hours', 168.0) # デフォルトを168に変更
+        monthly_target_hours = st.session_state.get('monthly_target_hours', 168.0) 
 
-        # 2. 個別目標の取得
         w_individual_targets = st.session_state.get('w_individual_targets', {})
         
-        # 3. もし個別目標が空（初回実行など）なら、スプレッドシート(config_times)から読み込む
         if not w_individual_targets:
             stored_df = load_sheet_no_cache("config_times", pd.DataFrame())
             stored_times = stored_df.to_dict('index') if not stored_df.empty else {}
             for key, val in stored_times.items():
                 if key.startswith("w_target_"):
                     name = key.replace("w_target_", "")
-                    # ここでも 160 ではなく monthly_target_hours をデフォルトにする
                     w_individual_targets[name] = float(val.get("start", monthly_target_hours))
 
-        # 万が一まだ空なら全員分を monthly_target_hours で埋める
         w_staff_list = master_df[master_df["グループ"] == "W"]["名前"].tolist()
         for name in w_staff_list:
             if name not in w_individual_targets:
@@ -2444,7 +2164,6 @@ elif mode == "シフト自動生成（案）":
 
         w_names = [str(n).strip() for n in w_staff_list] if 'w_staff_list' in dir() else []
 
-        # 実働時間計算関数
         def calc_total_hours(df, name):
             """DataFrame から1人の合計実働時間を計算する"""
             net = 0.0
@@ -2463,15 +2182,11 @@ elif mode == "シフト自動生成（案）":
                         net += n2
             return round(net, 1)
 
-        # 各Wの実働時間を計算
         staff_hours = {}
         for name in w_names:
             staff_hours[name] = calc_total_hours(best_overall_df, name)
 
-        # ==========================================
-        # ★ ステップ5準備：Wの空きコマリストを作成（拡張版） ★
-        # ==========================================
-        staff_free_slots = {}  # { w_name: [ { "slot": "1_d", "other_filled": True, "day": 1, "part": "d" }, ... ] }
+        staff_free_slots = {} 
 
         if best_overall_df is not None and 'slot_memory' in best_overall_df.attrs:
             slot_memory = best_overall_df.attrs['slot_memory']
@@ -2484,7 +2199,6 @@ elif mode == "シフト自動生成（案）":
 
                 d_num = int("".join(filter(str.isdigit, col.split('(')[0])))
 
-                # この日の出勤状況をslot_memoryから確認
                 has_day = False
                 has_night = False
                 for sid, sdata in slot_memory.items():
@@ -2498,7 +2212,7 @@ elif mode == "シフト自動生成（案）":
                 if not has_day:
                     free.append({
                         "slot": f"{d_num}_d",
-                        "other_filled": has_night,  # 夜が埋まっていればTrue
+                        "other_filled": has_night,  
                         "day": d_num,
                         "part": "d"
                     })
@@ -2512,14 +2226,9 @@ elif mode == "シフト自動生成（案）":
 
             staff_free_slots[w_name] = free
 
-        # ==========================================
-        # ★ ステップ5.2：空きコマの距離スコアリング ★
-        # ==========================================
         def calculate_slot_cost(staff_name, day_num, part, other_filled, df, column_names):
-            """ある空きコマに入る場合の連勤コストを計算する。低いほど良い。"""
             cost = 0
 
-            # 該当日の列を特定
             target_col = None
             for c in column_names:
                 d = int("".join(filter(str.isdigit, c.split('(')[0])))
@@ -2531,11 +2240,9 @@ elif mode == "シフト自動生成（案）":
 
             target_idx = column_names.index(target_col)
 
-            # 同じ日の別時間帯が埋まっていれば -100（ロングシフト化を促進）
             if other_filled:
                 cost -= 100
 
-            # 直前・直後（±1日）に仕事があるか
             for offset in [-1, 1]:
                 ni = target_idx + offset
                 if 0 <= ni < len(column_names):
@@ -2545,7 +2252,6 @@ elif mode == "シフト自動生成（案）":
                     if ("-" in v1 and v1 != "✖") or ("-" in v2 and v2 != "✖"):
                         cost += 100
 
-            # 2日離れているか
             for offset in [-2, 2]:
                 ni = target_idx + offset
                 if 0 <= ni < len(column_names):
@@ -2555,8 +2261,6 @@ elif mode == "シフト自動生成（案）":
                     if ("-" in v1 and v1 != "✖") or ("-" in v2 and v2 != "✖"):
                         cost += 30
 
-# 現在の連勤数に応じたペナルティ
-# 前後に連続何日働いているかカウント
             cons_before = 0
             ci = target_idx - 1
             while ci >= 0:
@@ -2580,18 +2284,16 @@ elif mode == "シフト自動生成（案）":
                 else:
                     break
 
-            new_streak = cons_before + 1 + cons_after  # この日を入れた場合の連続日数
+            new_streak = cons_before + 1 + cons_after  
             if new_streak >= 4:
                 cost += 500
             elif new_streak == 3:
                 cost += 200
 
-            # ランダム要素 (0〜10)
             cost += random.uniform(0, 10)
 
             return cost
 
-        # 各Wの空きコマのコストを計算
         staff_slot_costs = {}  # { w_name: [ { "slot": ..., "cost": ... }, ... ] }
         for w_name in w_names:
             free_list = staff_free_slots.get(w_name, [])
@@ -2608,16 +2310,9 @@ elif mode == "シフト自動生成（案）":
                     "other_filled": slot_info["other_filled"],
                     "cost": cost
                 })
-            # コストの低い順にソート
             cost_list.sort(key=lambda x: x["cost"])
             staff_slot_costs[w_name] = cost_list
 
-        # ==========================================
-        # ★ ステップ6：目標達成ループ（仕様準拠版） ★
-        # ==========================================
-
-
-        # バイトの充足率（日数ベース）を返す
         def get_baito_fulfillment(df, name):
             days = 0
             for c in column_names:
@@ -2627,16 +2322,13 @@ elif mode == "シフト自動生成（案）":
             goal = staff_goals.get(name, 1)
             return days / max(goal, 1)
 
-# メインループ
         loop_count = 0
         max_loops = 300
         staff_slot_costs_copy = {name: list(costs) for name, costs in staff_slot_costs.items()}
 
         while loop_count < max_loops:
-            # 現在の実働を再計算
             current_hours = recalc_all_w_hours(best_overall_df, w_names)
 
-            # 目標未達のWがいるか確認
             all_achieved = True
             for name in w_names:
                 target = w_individual_targets.get(name, monthly_target_hours)
@@ -2647,14 +2339,12 @@ elif mode == "シフト自動生成（案）":
                 st.success("🎉 全Wが目標時間に到達しました！")
                 break
 
-            # 全Wの中で最もコストが低い空きコマを1つ選ぶ
             best_overall_candidate = None
             best_w_name = None
             for w_name in w_names:
                 costs = staff_slot_costs_copy.get(w_name, [])
                 if not costs:
                     continue
-                # このWの最優先候補（コスト最小）
                 candidate = costs[0]
                 if best_overall_candidate is None or candidate["cost"] < best_overall_candidate["cost"]:
                     best_overall_candidate = candidate
@@ -2664,12 +2354,10 @@ elif mode == "シフト自動生成（案）":
                 st.warning("⚠️ 有効な空きコマがなくなりました。手動調整が必要です。")
                 break
 
-            # 選ばれた空きコマ情報
             target_slot_name = best_overall_candidate["slot"]  # 例: "17_n"
             target_day = best_overall_candidate["day"]
             target_part = best_overall_candidate["part"]
 
-            # --- この空きコマに対応するスロットを slot_memory からリストアップ ---
             target_slot_ids = []
             for sid, sdata in slot_memory.items():
                 if sdata.get("day") == target_day:
@@ -2680,11 +2368,9 @@ elif mode == "シフト自動生成（案）":
                         target_slot_ids.append((sid, sdata))
 
             if not target_slot_ids:
-                # スロットが見つからなければこの候補を削除して次へ
                 staff_slot_costs_copy[best_w_name].pop(0)
                 continue
 
-            # --- 充足率が最大のバイトを選ぶ ---
             best_slot = None
             best_baito_name = None
             best_baito_rate = -1
@@ -2699,11 +2385,9 @@ elif mode == "シフト自動生成（案）":
                     best_slot = (sid, sdata)
 
             if best_slot is None:
-                # 適切なバイトがいなければこの候補を削除して次へ
                 staff_slot_costs_copy[best_w_name].pop(0)
                 continue
 
-            # --- スワップ実行 ---
             baito_name = best_baito_name
             sid, sdata = best_slot
             col = sdata["col"]
@@ -2712,7 +2396,6 @@ elif mode == "シフト自動生成（案）":
                 staff_slot_costs_copy[best_w_name].pop(0)
                 continue
 
-            # Wの該当セルに書き込み（昼なら1行目、夜なら2行目優先）
             w_name = best_w_name
             name2 = f"{w_name} "
             v1 = str(best_overall_df.at[w_name, col]).strip() if w_name in best_overall_df.index else ""
@@ -2724,7 +2407,7 @@ elif mode == "シフト自動生成（案）":
                 else:
                     staff_slot_costs_copy[best_w_name].pop(0)
                     continue
-            else:  # target_part == "n"
+            else:  
                 if name2 in best_overall_df.index and v2 in ["", "nan"]:
                     best_overall_df.at[name2, col] = baito_val
                 elif v1 in ["", "nan"]:
@@ -2733,12 +2416,10 @@ elif mode == "シフト自動生成（案）":
                     staff_slot_costs_copy[best_w_name].pop(0)
                     continue
 
-            # バイトのセルを空にする
             best_overall_df.at[baito_name, col] = ""
             # slot_memory 更新
             sdata["assigned_to"] = w_name
 
-# --- ロングシフト化（同じ日に昼と夜が揃ったら連結） ---
             v1 = str(best_overall_df.at[w_name, col]).strip() if w_name in best_overall_df.index else ""
             v2 = str(best_overall_df.at[name2, col]).strip() if name2 in best_overall_df.index else ""
             if "-" in v1 and "-" in v2 and v1 != "✖" and v2 != "✖":
@@ -2749,16 +2430,11 @@ elif mode == "シフト自動生成（案）":
                 except:
                     pass
 
-            # --- 使用した空きコマをリストから削除 ---
-            # 今回使った空きコマ（target_slot_name）を削除
-# --- 使用した空きコマをリストから削除 ---
             staff_slot_costs_copy[best_w_name] = [
                 c for c in staff_slot_costs_copy[best_w_name] if c["slot"] != target_slot_name
             ]
             loop_count += 1
 
-            # --- [B] 今回の試行（trial）の採点 ---
-            # 1. 欠員ペナルティ
             current_trial_shortage = 0
             if 'slot_memory' in trial_df.attrs:
                 for sid, data in trial_df.attrs['slot_memory'].items():
@@ -2767,8 +2443,6 @@ elif mode == "シフト自動生成（案）":
             
             shortage_penalty = current_trial_shortage * 100
             
-            # 2. Wの労働時間誤差ペナルティ
-            # recalc_all_w_hours を使って今回の試行時間を計算
             current_w_hours = recalc_all_w_hours(trial_df, w_names)
             w_error_penalty = 0
             for name in w_names:
@@ -2778,32 +2452,24 @@ elif mode == "シフト自動生成（案）":
             
             trial_score = shortage_penalty + w_error_penalty
             
-            # 3. 過去最高を塗り替えたら保存
             if trial_score < min_score:
                 min_score = trial_score
-                final_best_df = trial_df.copy() # 成功案を確保
+                final_best_df = trial_df.copy() 
                 final_best_alerts = trial_alerts 
                 if 'slot_memory' in trial_df.attrs:
                     final_best_df.attrs['slot_memory'] = trial_df.attrs['slot_memory'].copy()
 
             progress_bar.progress((trial_idx + 1) / NUM_TRIALS)
 
-        # ==========================================
-        # ★ ここで10回のループ(for)が終了 ★
-        # ==========================================
         
-        # 4. 全試行の中で最も良かった案を「採用案」として確定させる
         if final_best_df is not None:
-            best_overall_df = final_best_df # ここで初めてメインの変数にセット
+            best_overall_df = final_best_df 
             st.session_state.last_shortage_alerts = final_best_alerts
         else:
             st.error("有効なシフト案を生成できませんでした。")
             st.stop()
 
-    # 以降、Snippet 1の「最終微調整（0.5h延長）」や「2行分割」に進む...
-# 最終集計
         final_hours = recalc_all_w_hours(best_overall_df, w_names)
-        # ★★★ 実働時間計算関数（最終微調整用） ★★★
         def calc_hours(df, name):
             net = 0.0
             for c in column_names:
@@ -2814,16 +2480,12 @@ elif mode == "シフト自動生成（案）":
                             n_net, _ = calc_work_and_break(val)
                             net += n_net
             return round(net, 1)
-        # ==========================================
-        # ★ 最終微調整（0.5h単位の不足を強制解消） ★
-        # ==========================================
         for name in w_names:
             target = w_individual_targets.get(name, monthly_target_hours)
             current = calc_hours(best_overall_df, name)
             deficit = target - current
 
             if deficit > 0:
-                # 最も短いシフトを探して延長
                 shortest_col = None
                 shortest_duration = 999
                 for col in column_names:
@@ -2844,106 +2506,78 @@ elif mode == "シフト自動生成（案）":
                     start1 = v1.split("-")[0]
                     end1 = v1.split("-")[1]
                     e1 = time_to_float(end1)
-                    # 0.5時間単位で延長
                     new_end = float_to_time(e1 + 0.5)
                     extended = f"{start1}-{new_end}"
                     best_overall_df.at[name, shortest_col] = extended
 
-# ==========================================
-        # ★ 全スタッフ対象：最終的な2行分割処理（✖の2列目を空にする） ★
-        # ==========================================
         status_text.text("全スタッフの休憩分割を適用中...")
 
         for name in ALL_NAMES:
             clean_name = str(name).strip()
             name2 = f"{clean_name} "
             
-            # 名簿の名前が表に存在しない場合はスキップ
             if clean_name not in best_overall_df.index:
                 continue
 
             for col in column_names:
-                # 1行目の値を取得
                 v1 = str(best_overall_df.at[clean_name, col]).strip()
                 
-                # --- A. 休み（✖）の処理 ---
                 if v1 == "✖":
                     if name2 in best_overall_df.index:
-                        best_overall_df.at[name2, col] = "" # 2行目は空にする
-                    continue # この日の処理は終わり
-
-                # --- B. シフト（10:00-18:00など）の処理 ---
+                        best_overall_df.at[name2, col] = "" 
+                    continue 
                 v2 = str(best_overall_df.at[name2, col]).strip() if name2 in best_overall_df.index else ""
 
-                # 1行目にのみシフトがあり、2行目が空の場合のみ分割を実行
                 if "-" in v1 and v2 in ["", "nan", "None"]:
                     part1, part2 = get_split_shift(v1, s_data)
                     if part2:
                         best_overall_df.at[clean_name, col] = part1
                         best_overall_df.at[name2, col] = part2
 
-# --- 最終的な実働時間計算関数（Excelの数式と一致させる） ---
         def calc_hours_for_display(df, name):
             total_net = 0.0
             for c in column_names:
                 day_net = 0.0
-                # 1行目と2行目（名前＋スペース）の両方をチェック
                 for n in [name, f"{name} "]:
                     if n in df.index:
                         val = str(df.at[n, c]).strip()
                         if "-" in val and val != "✖":
                             try:
                                 s_str, e_str = val.split("-")
-                                # 単純に「終了時間 - 開始時間」を計算
                                 diff = time_to_float(e_str) - time_to_float(s_str)
-                                if diff < 0: diff += 24 # 深夜跨ぎ対応
+                                if diff < 0: diff += 24
                                 day_net += diff
                             except:
                                 pass
                 total_net += day_net
             return round(total_net, 1)
 
-        # ==========================================
-        # ★ 最終達成状況の表示（修正版） ★
-        # ==========================================
         st.subheader("📊 社員の労働時間 達成状況")
         final_all_ok = True
         for name in w_names:
-            # 設定から目標時間を取得
             target = w_individual_targets.get(name, monthly_target_hours)
-            # 修正した関数で計算
             h = calc_hours_for_display(best_overall_df, name)
             
             if h >= target:
                 st.success(f"✅ {name}: {h:.1f}h / {target:.0f}h")
             else:
-                # 0.1h程度の誤差は許容するようにしても良いですが、厳密に判定
                 final_all_ok = False
                 st.warning(f"⚠️ {name}: {h:.1f}h / {target:.0f}h (不足 {target-h:.1f}h)")
-# ==========================================
-        # ★ 最終欠員集計ロジック（ここを差し替え） ★
-        # ==========================================
         status_text.text("最終的な欠員状況を確認中...")
         
         final_shortage_alerts = []
         
-        # slot_memory（ステップ1で作った全必要枠のリスト）をスキャンする
         if 'slot_memory' in best_overall_df.attrs:
             actual_memory = best_overall_df.attrs['slot_memory']
             
-            # 日付ごとに欠員をまとめるための辞書 { 日: [欠員ポジション1, 2...] }
             day_shortages = {}
             
             for sid, data in actual_memory.items():
-                # その枠に誰も割り当てられていない、または名前が空の場合
-                # 注意：assigned_to はステップ3のスワップ処理でも正しく更新されている必要があります
                 assigned = data.get("assigned_to")
                 
-                # 念のため、実際の表(best_overall_df)のその場所が本当に空かどうかも再確認
                 col = data["col"]
                 name = assigned if assigned else ""
                 
-                # 表の中でその人がその日働いているかチェック
                 is_filled = False
                 if name:
                     v1 = str(best_overall_df.at[name, col]).strip() if name in best_overall_df.index else ""
@@ -2958,20 +2592,14 @@ elif mode == "シフト自動生成（案）":
                         day_shortages[d] = []
                     day_shortages[d].append(pos_jp)
 
-            # 辞書をメッセージ形式に変換
             for d in sorted(day_shortages.keys()):
                 positions = day_shortages[d]
-                # 同じポジションが複数ある場合は「H昼×2」のように表示
                 from collections import Counter
                 pos_counts = Counter(positions)
                 pos_str = ", ".join([f"{p}×{count}" if count > 1 else p for p, count in pos_counts.items()])
                 final_shortage_alerts.append(f"{d}日: {pos_str} 欠員")
 
-        # ==========================================
-        # ★ 最終保存 ★
-        # ==========================================
         st.session_state.last_generated_df = best_overall_df
-        # 修正ポイント：空にするのではなく、計算した final_shortage_alerts を入れる
         st.session_state.last_shortage_alerts = final_shortage_alerts
         
         status_text.empty()
@@ -2984,9 +2612,6 @@ elif mode == "シフト自動生成（案）":
             st.warning(f"⚠️ シフトは生成されましたが、{len(final_shortage_alerts)}日分の欠員があります。")
 
 
-
-
-    # --- 3. 結果の表示（最適化後・完全版） ---
     if st.session_state.last_generated_df is not None:
         EXT_NAMES = st.session_state.last_generated_df.index.tolist()
         st.subheader("🤖 生成されたシフト案の確認")
@@ -2999,7 +2624,6 @@ elif mode == "シフト自動生成（案）":
             if i % 2 != 0:
                 display_df.at[i, '名前'] = ""
 
-        # Wグループの色分け用
         w_names = []
         if not master_df.empty:
             w_names = master_df[master_df["グループ"] == "W"]["名前"].tolist()
@@ -3064,49 +2688,41 @@ elif mode == "シフト自動生成（案）":
         st.divider()
         st.subheader("📥 シフト表をダウンロード")
 
-# --- Excel出力（4行レイアウト・動的計算式版） ---
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            # 1. 出力用データの準備（2行→4行セットに加工）
             export_df = st.session_state.last_generated_df.copy()
             export_df = export_df.reset_index()
             export_df.rename(columns={'index': '名前'}, inplace=True)
 
-            # グループ列を追加
             name_to_group = {}
             if not master_df.empty and "名前" in master_df.columns and "グループ" in master_df.columns:
                 name_to_group = master_df.set_index("名前")["グループ"].to_dict()
             groups = [name_to_group.get(str(n).strip(), "") for n in export_df['名前']]
             export_df.insert(0, "グループ", groups)
 
-            # 空の合計列を追加
             export_df["合計実働"] = ""
             export_df["休憩合計"] = ""
             export_df["充足率"] = ""
-            # ★ 2行ごとに計算行(2行)を挿入（4行で1セット）
             new_rows = []
             for i in range(len(export_df)):
                 new_rows.append(export_df.iloc[i].to_dict())
-                if i % 2 == 1:      # 後半行の直後に計算行・休憩行を追加
+                if i % 2 == 1:      
                     calc_row = {col: "" for col in export_df.columns}
                     break_row = {col: "" for col in export_df.columns}
                     new_rows.append(calc_row)
                     new_rows.append(break_row)
             export_df = pd.DataFrame(new_rows)
 
-            # 2. Excelシートへ書き出し
             export_df.to_excel(writer, sheet_name='シフト表', startrow=3, index=False)
             workbook = writer.book
             worksheet = writer.sheets['シフト表']
 
-            # 3. 印刷設定
             worksheet.set_portrait()
             worksheet.set_paper(9)
             worksheet.set_margins(0.3, 0.3, 0.3, 0.3)
             worksheet.center_horizontally()
             worksheet.fit_to_pages(1, 0)
 
-            # 4. タイトル
             title_fmt = workbook.add_format({
                 'bold': True, 'size': 22, 'align': 'center', 'valign': 'vcenter',
                 'font_name': 'Meiryo UI', 'color': '#333333'
@@ -3118,16 +2734,14 @@ elif mode == "シフト自動生成（案）":
             worksheet.set_row(0, 40)
             worksheet.set_row(1, 8)
 
-            # 5. 書式定義
-            # --- 合計行用の書式定義 ---
             fmt_total_combined = workbook.add_format({
-                'bold': True,           # 太字
-                'border': 2,            # 外枠を太く
-                'bg_color': "#D0FFCC",  # 薄い黄色（合計とわかりやすくするため）
-                'align': 'center',      # 中央揃え
-                'valign': 'vcenter',    # 上下中央揃え
-                'num_format': '0.0',    # 小数点第1位まで表示
-                'size': 17            # 文字サイズを少し大きく
+                'bold': True,           
+                'border': 2,            
+                'bg_color': "#D0FFCC",  
+                'align': 'center',      
+                'valign': 'vcenter',    
+                'num_format': '0.0',    
+                'size': 17            
             })
             fmt_pct = workbook.add_format({
                 'bold': True,
@@ -3181,7 +2795,6 @@ elif mode == "シフト自動生成（案）":
                 'align': 'center', 'valign': 'vcenter', 'size': 16, 'font_name': 'Meiryo UI'
             })
 
-            # 6. ヘッダー行
             header_row = 2
             worksheet.set_row(header_row, 24)
             h_list = [h[0] for h in get_month_holidays_list(year, month)]
@@ -3207,24 +2820,19 @@ elif mode == "シフト自動生成（案）":
                     except:
                         worksheet.write(header_row, c_idx, col_name, fmt_header)
 
-# --- 7. 変数の定義と列幅の設定 ---
-            # まず計算の基準となる数値を定義します（これで NameError を防ぎます）
             date_start = 2
             num_dates = len(column_names)
             total_col = date_start + num_dates
             break_col = total_col + 1
-            fulfillment_col = break_col + 1 # 充足率の列番号
+            fulfillment_col = break_col + 1 
 
-            # 列幅の設定
-            worksheet.set_column(0, 0, 5)    # G列
-            worksheet.set_column(1, 1, 18)   # 名前列
+            worksheet.set_column(0, 0, 5)   
+            worksheet.set_column(1, 1, 18)   
             for i in range(num_dates):
-                worksheet.set_column(date_start + i, date_start + i, 11) # 日付列
+                worksheet.set_column(date_start + i, date_start + i, 11) 
             
-            # 右端の集計3列（合計・休憩・充足率）の幅を一括設定
             worksheet.set_column(total_col, fulfillment_col, 10)
 
-            # --- 8. ヘルパー関数 ---
             def col_letter(idx):
                 if idx < 26: return chr(65 + idx)
                 return chr(64 + idx // 26) + chr(65 + idx % 26)
@@ -3240,8 +2848,7 @@ elif mode == "シフト自動生成（案）":
                     f',0)'
                 )
 
-# --- 9. データ行（4行セット）の書き込み ---
-            for i in range(0, len(export_df), 4):   # 4行ずつ処理
+            for i in range(0, len(export_df), 4):   
                 base_row = header_row + 1 + i
                 if i + 3 >= len(export_df):
                     continue
@@ -3249,24 +2856,19 @@ elif mode == "シフト自動生成（案）":
                 name = str(export_df.iloc[i]["名前"]).strip()
                 group = str(export_df.iloc[i]["グループ"]).strip()
 
-                # Excelの行番号（1始まり）を定義
-                r1 = base_row + 1      # 1行目（前半）
-                r2 = base_row + 2      # 2行目（後半）
-                r3 = base_row + 3      # 3行目（実働計算行）
-                r4 = base_row + 4      # 4行目（休憩計算行）
+                r1 = base_row + 1      
+                r2 = base_row + 2      
+                r3 = base_row + 3      
+                r4 = base_row + 4     
 
-                # グループ・名前・合計・休憩・充足率の各列を4行マージ
                 worksheet.merge_range(base_row, 0, base_row + 3, 0, group, fmt_merge)
                 worksheet.merge_range(base_row, 1, base_row + 3, 1, name, fmt_merge)
 
-                # 行の高さ設定
-                worksheet.set_row(base_row, 23)      # 1行目
-                worksheet.set_row(base_row + 1, 23)  # 2行目
-                worksheet.set_row(base_row + 2, 12)  # 3行目
-                # 4行目（休憩詳細）はデータ集計用なので非表示にする設定
+                worksheet.set_row(base_row, 23)      
+                worksheet.set_row(base_row + 1, 23)  
+                worksheet.set_row(base_row + 2, 12)  
                 worksheet.set_row(base_row + 3, 17, None, {'hidden': True})
 
-                # 日付列のループ
                 for c in range(date_start, date_start + num_dates):
                     cl = col_letter(c)
                     ref1 = f"{cl}{r1}"
@@ -3275,84 +2877,61 @@ elif mode == "シフト自動生成（案）":
                     val1 = str(export_df.iloc[i, c]) if c < export_df.shape[1] else ""
                     val2 = str(export_df.iloc[i+1, c]) if c < export_df.shape[1] else ""
 
-                    # シフト時間を書き込み
                     worksheet.write(base_row, c, val1 if val1 != "nan" else "", fmt_row1)
                     worksheet.write(base_row + 1, c, val2 if val2 != "nan" else "", fmt_row2)
 
-                    # --- 3行目：日次実働計算（動的） ---
                     d1 = get_dur_formula(ref1)
                     d2 = get_dur_formula(ref2)
                     worksheet.write_formula(base_row + 2, c, f"={d1}+{d2}", fmt_calc)
 
-                    # --- 4行目：日次休憩計算（動的） ---
                     s2 = f'LEFT(LEFT({ref2},FIND("-",{ref2})-1),FIND(":",LEFT({ref2},FIND("-",{ref2})-1))-1)+RIGHT(LEFT({ref2},FIND("-",{ref2})-1),2)/60'
                     e1 = f'LEFT(MID({ref1},FIND("-",{ref1})+1,10),FIND(":",MID({ref1},FIND("-",{ref1})+1,10))-1)+RIGHT(MID({ref1},FIND("-",{ref1})+1,10),2)/60'
                     brk_f = f'=IF(AND({ref1}<>"",{ref2}<>"",ISNUMBER(FIND("-",{ref1})),ISNUMBER(FIND("-",{ref2}))),({s2})-({e1}),0)'
                     worksheet.write_formula(base_row + 3, c, brk_f, fmt_break)
 
-                # --- 右端：月合計（SUM数式） ---
                 col_start = col_letter(date_start)
                 col_end = col_letter(date_start + num_dates - 1)
 
-                # 合計実働マージ
                 worksheet.merge_range(base_row, total_col, base_row + 3, total_col, 
                                       f"=SUM({col_start}{r3}:{col_end}{r3})", fmt_total)
 
-                # 休憩合計マージ
                 worksheet.merge_range(base_row, break_col, base_row + 3, break_col,
                                       f"=SUM({col_start}{r4}:{col_end}{r4})", fmt_total)
 
-# --- ★★★ 充足率の【動的】計算と書き込み（社員：時間ベース / バイト：日数ベース） ★★★ ---
                 
-                # 1. 社員（Wグループ）かバイトかでロジックを分岐
                 if group == "W":
-                    # --- 【社員の場合：時間ベース】 ---
-                    # w_individual_targets（設定シートから読込済）から目標時間を取得。なければ168。
                     target_h = w_individual_targets.get(name, 168.0)
                     
-                    # 合計実働が書かれているセルの参照（total_col列 の base_row+1行目）
                     total_cell_ref = f"{col_letter(total_col)}{base_row + 1}"
                     
-                    # 数式：合計実働 / 目標時間
                     dynamic_fulfillment_formula = f"={total_cell_ref}/{target_h}"
-                    current_fmt = fmt_pct  # ％書式を適用
+                    current_fmt = fmt_pct  
                 
                 else:
-                    # --- 【バイトの場合：日数ベース（従来通り）】 ---
-                    # 本人の「週希望」を取得（0を正しく0として扱う）
                     weekly_pref = 3.0 
                     if not master_df.empty:
                         match = master_df[master_df["名前"] == name]
                         if not match.empty:
                             val = pd.to_numeric(match.iloc[0]["週希望"], errors='coerce')
-                            # NaN（空欄）のときだけデフォルトの3にする。0はそのまま0として使う。
                             weekly_pref = val if not pd.isna(val) else 3.0
                     
                     target_days = (weekly_pref / 7) * num_dates
                     
-                    # 日付列の範囲を特定
                     col_start = col_letter(date_start)
                     col_end = col_letter(date_start + num_dates - 1)
                     
-                    # 3行目（実働計算行）が0より大きい日をカウントする数式
                     actual_days_f = f'COUNTIF({col_start}{r3}:{col_end}{r3},">0")'
 
                     if target_days == 0:
-                        # 【週希望0の人（新人）の場合】
-                        # 出勤が1日でもあれば「(○日)」、0日なら「-」と表示
                         dynamic_fulfillment_formula = f'=IF({actual_days_f}>0, "("&{actual_days_f}&"日)", "-")'
                         current_fmt = fmt_merge 
                     else:
-                        # 【通常スタッフの場合】
-                        # 実際の出勤日数 / 目標日数
                         dynamic_fulfillment_formula = f"={actual_days_f}/{target_days}"
                         current_fmt = fmt_pct
 
-                # 2. 決定した数式と書式を4行マージセルに書き込み
                 worksheet.merge_range(base_row, fulfillment_col, base_row + 3, fulfillment_col, 
                                       dynamic_fulfillment_formula, current_fmt)
 
-# --- 10. 最終行：日別合計（総人時）の計算 ---
             total_row_idx = header_row + 1 + len(export_df)
             worksheet.set_row(total_row_idx, 25)
 
@@ -3361,25 +2940,19 @@ elif mode == "シフト自動生成（案）":
             first_data_row = header_row + 2
             last_data_row = header_row + 1 + len(export_df)
 
-            # 各日付（C列〜）の合計：ここは3行目と4行目が混在しているので、MODを使って3行目(実働)だけを狙う
             for c in range(date_start, date_start + num_dates):
                 cl = col_letter(c)
-                # 日別合計は、MOD=2（実働行）だけを正確に拾う
                 sum_formula = (
                     f"=SUMPRODUCT(({cl}{first_data_row}:{cl}{last_data_row}),"
                     f"(MOD(ROW({cl}{first_data_row}:{cl}{last_data_row}),4)=2)*1)"
                 )
                 worksheet.write_formula(total_row_idx, c, sum_formula, fmt_total_combined)
 
-# --- 右端：月間総合計（実働・休憩） ---
-# ここは結合セルなので、シンプルなSUMでOK（一番上の行の数値だけを自動で拾うため）
             total_work_sum_formula = f"=SUM({col_letter(total_col)}{first_data_row}:{col_letter(total_col)}{last_data_row})"
             worksheet.write_formula(total_row_idx, total_col, total_work_sum_formula, fmt_total_combined)
 
             total_break_sum_formula = f"=SUM({col_letter(break_col)}{first_data_row}:{col_letter(break_col)}{last_data_row})"
             worksheet.write_formula(total_row_idx, break_col, total_break_sum_formula, fmt_total_combined)
-# --- 【追加】印刷枠外への欠員情報の書き込み ---
-            # 1. 欠員用の書式設定（赤太字）
             shortage_fmt = workbook.add_format({
                 'bold': True,
                 'font_color': 'red',
@@ -3387,86 +2960,62 @@ elif mode == "シフト自動生成（案）":
                 'font_name': 'Meiryo UI'
             })
 
-            # 2. 【重要】印刷範囲をテーブルの端（fulfillment_col）までに制限
-            # これにより、この後に右側に書くメモは印刷されません
             worksheet.print_area(0, 0, total_row_idx, fulfillment_col)
 
-            # 3. 欠員リストがある場合に、表の右側（2列空けた位置）に書き込む
             if st.session_state.last_shortage_alerts:
                 memo_col = fulfillment_col + 2
                 worksheet.write(header_row, memo_col, "⚠️ 欠員・調整が必要な箇所（募集・ヘルプ検討）", shortage_fmt)
                 
-                # 欠員情報を1行ずつ書き込む
                 for i, msg in enumerate(st.session_state.last_shortage_alerts):
-                    # 各項目の書き出し位置を調整（2行おきに配置）
                     worksheet.write(header_row + 2 + (i * 2), memo_col, f"・{msg}", shortage_fmt)
-# --- 仕上げ：ウィンドウ枠の固定 ---
             worksheet.freeze_panes(header_row + 1, 2)
 
-            # --- ★ config_timesシートから時間を取得してドロップダウンに設定 ---
             try:
-                # 1. スプレッドシートから直接設定を読み込む
                 conf_df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="config_times", ttl=0)
                 
                 valid_shifts = []
                 if conf_df is not None and not conf_df.empty:
-                    # start列とend列が存在するか確認
                     if "start" in conf_df.columns and "end" in conf_df.columns:
                         for _, row in conf_df.iterrows():
                             s_t = str(row["start"]).strip()
                             e_t = str(row["end"]).strip()
-                            # "10:00" のように時刻形式になっているものだけを抽出
                             if ":" in s_t and ":" in e_t:
                                 valid_shifts.append((s_t, e_t))
                 
-                # 2. 重複を削除
                 valid_shifts = list(set(valid_shifts))
                 
-                # 3. スタート時間が早い順に並べ替え（time_to_float関数を利用）
                 valid_shifts.sort(key=lambda x: time_to_float(x[0]))
                 
-                # 4. "10:00-15:00" の形式に整形
                 dropdown_list = [f"{s}-{e}" for s, e in valid_shifts]
                 
-                # 5. 基本の選択肢（✖や空欄）を追加
                 dropdown_list.extend(['✖', ' '])
 
-                # リストが空（または読み込み失敗）の場合のデフォルト
                 if len(dropdown_list) <= 2:
                     dropdown_list = ['10:00-15:00', '16:00-23:00', '10:00-22:00', '✖', ' ']
 
-                # 6. Excelの入力規則（ドロップダウン）を適用
                 worksheet.data_validation(header_row + 1, date_start, total_row_idx - 1, date_start + num_dates - 1, {
                     'validate': 'list',
                     'source': dropdown_list,
                     'input_title': 'シフト選択',
                     'input_message': '直接入力可能',
-                    'error_type': 'information', # リスト外の自由入力を許可
+                    'error_type': 'information',
                     'show_error': False,
                     'ignore_blank': True
                 })
             except Exception as e:
-                # 万が一エラーが起きてもダウンロードボタンを消さないためのガード
                 st.sidebar.error(f"ドロップダウン作成エラー: {e}")
-
-        # ↑ ここまでが with pd.ExcelWriter(...) の中身
-                # エラーが起きてもエクセル作成を止めないためのガード
                 pass
 
-        # ↑ ここまでが with pd.ExcelWriter(...) as writer: の中身（インデント8つ分）
-
-    # --- ★ここからボタン（withブロックの外に出す。インデント4つ分） ---
-        st.write("") # スペース
+        st.write("") 
         st.download_button(
             label="📥 このシフト表をExcelで保存",
             data=buffer.getvalue(),
             file_name=f"shift_{year}_{month:02}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
-            key="excel_download_btn" # 重複防止用のキー
+            key="excel_download_btn" 
         )
 
-    # 欠員警告の表示
         st.divider()
         st.subheader("欠員状況の確認")
         if st.session_state.last_shortage_alerts:
@@ -3482,7 +3031,6 @@ elif mode == "シフト自動生成（案）":
 
 if mode == "確定シフト閲覧":
     st.title("確定シフト閲覧")
-    # --- 0. CSS設定 ---
     st.markdown("""
         <style>
         @keyframes fadeInUp { 
@@ -3528,7 +3076,6 @@ if mode == "確定シフト閲覧":
     """, unsafe_allow_html=True)
     
 
-    # --- 1. 日付とつぶやきの準備 ---
     today = get_japan_today()
     date_str_today = today.strftime("%Y/%m/%d")
     t_month, t_year = today.month, today.year
@@ -3566,32 +3113,26 @@ if mode == "確定シフト閲覧":
                     )
                 )
 
-    # --- 2. シフトデータの読み込みと「超」徹底掃除 ---
     today_sheet = f"shift_{t_year}_{t_month:02}"
     confirmed_df = load_confirmed_shift(today_sheet)
 
     if confirmed_df.empty:
         st.warning(f"📅 {t_year}年{t_month}月の確定シフトがまだ登録されていません。")
     else:
-        # インデックスを列に戻して全データをフラットにする
         display_view = confirmed_df.reset_index()
         
-        # 列の役割を判定
         group_col = display_view.columns[0]
         name_col = display_view.columns[1]
         
-        # もし1列目に「名前」という文字が入っていたら、列をずらす
         if "名前" in str(display_view.columns[0]):
             name_col = display_view.columns[0]
             group_col = display_view.columns[1]
 
-        # --- ヘッダー行の除去ロジック ---
         ignore_keywords = ["名前", "グループ", "合計実働", "休憩合計", "index", "Unnamed"]
         display_view = display_view[~display_view[name_col].astype(str).str.contains("|".join(ignore_keywords), na=False)]
         display_view = display_view[~display_view[group_col].astype(str).str.contains("|".join(ignore_keywords), na=False)]
         display_view = display_view.reset_index(drop=True)
 
-        # 今日の日付列を特定
         target_col = None
         for c in display_view.columns:
             c_digits = "".join(filter(str.isdigit, str(c).split('(')[0]))
@@ -3599,11 +3140,9 @@ if mode == "確定シフト閲覧":
                 target_col = c
                 break
 
-        # ★ つぶやき入力状態の管理
         if "tweet_input_target" not in st.session_state:
             st.session_state.tweet_input_target = None
 
-        # --- 3. 本日の出勤メンバー表示エリア ---
         with st.expander(f"🏃 本日 {t_month}月{today.day}日の出勤メンバー", expanded=True):
             if target_col is None:
                 st.error(f"今日の日付「{t_day_str}」の列が見つかりません。")
@@ -3639,7 +3178,6 @@ if mode == "確定シフト閲覧":
                             has_tweet = m["名前"] in today_tweet_dict
                             tweet_msg = today_tweet_dict.get(m["名前"], "")
                             
-                            # 1行を表示
                             sub_col1, sub_col2 = st.columns([5, 0.5])
                             
                             with sub_col1:
@@ -3652,11 +3190,9 @@ if mode == "確定シフト閲覧":
                                 )
                             
                             with sub_col2:
-                                # ★ st.popover を使った吹き出し入力
                                 with st.popover("💭", help=f"{m['名前']}さんのつぶやきを入力"):
                                     st.markdown(f"**{m['名前']}** さんのメッセージ")
                                     
-                                    # 既存のつぶやきがあれば表示
                                     if has_tweet:
                                         st.info(f"現在のつぶやき: {tweet_msg}")
                                     
@@ -3681,7 +3217,6 @@ if mode == "確定シフト閲覧":
                                                     except:
                                                         existing_tweets = pd.DataFrame(columns=["日付", "名前", "メッセージ"])
                                                     
-                                                    # 同じ日付・同じ名前の古いつぶやきを削除
                                                     if not existing_tweets.empty:
                                                         existing_tweets = existing_tweets[
                                                             ~((existing_tweets["日付"].astype(str) == date_str_today) & 
@@ -3717,7 +3252,6 @@ if mode == "確定シフト閲覧":
                                                 except:
                                                     existing_tweets = pd.DataFrame(columns=["日付", "名前", "メッセージ"])
                                                 
-                                                # 該当のつぶやきを削除
                                                 if not existing_tweets.empty:
                                                     existing_tweets = existing_tweets[
                                                         ~((existing_tweets["日付"].astype(str) == date_str_today) & 
@@ -3751,7 +3285,6 @@ if mode == "確定シフト閲覧":
                                 )
                             
                             with sub_col2:
-                                # ★ st.popover を使った吹き出し入力
                                 with st.popover("💭", help=f"{m['名前']}さんにつぶやきを入力"):
                                     st.markdown(f"**{m['名前']}** さんへのメッセージ")
                                     
@@ -3830,7 +3363,6 @@ if mode == "確定シフト閲覧":
 
     st.divider()
 
-# --- 4. 全体表示エリア (データクレンジング & 合算表示) ---
     st.subheader("📅 全体シフト閲覧")
     col_sel_y, col_sel_m = st.columns(2)
     v_year = col_sel_y.selectbox("表示年", [today.year-1, today.year, today.year+1], index=1, key="v_y")
@@ -3842,13 +3374,10 @@ if mode == "確定シフト閲覧":
     if v_df_raw.empty:
         st.info(f"💡 {v_year}年{v_month}月の確定シフトはまだ公開されていません。")
     else:
-        # --- 1. データのクレンジングと列名の修正 ---
         v_view = v_df_raw.reset_index(drop=False)  # ★ インデックスを列として残す
         
-        # 列名を文字列に統一
         v_view.columns = [str(c).strip() for c in v_view.columns]
         
-        # グループ列と名前列を特定
         v_group_col = None
         v_name_col = None
         
@@ -3859,31 +3388,26 @@ if mode == "確定シフト閲覧":
             elif col_str in ["名前", "name", "Name"]:
                 v_name_col = col
         
-        # 見つからない場合は最初の2列を使用
         if v_group_col is None:
             v_group_col = v_view.columns[0]
         if v_name_col is None:
             v_name_col = v_view.columns[1] if len(v_view.columns) > 1 else v_view.columns[0]
         
-        # ゴミ行の除去
         ignore_keywords = ["名前", "グループ", "合計実働", "休憩合計", "index", "Unnamed", "G"]
         if v_name_col in v_view.columns:
             v_view = v_view[~v_view[v_name_col].astype(str).str.contains("|".join(ignore_keywords), na=False)]
         v_view = v_view.reset_index(drop=True)
         
-        # 日付列の特定
         actual_date_cols = []
         for col in v_view.columns:
             col_str = str(col).strip()
             if "(" in col_str and ")" in col_str:
                 actual_date_cols.append(col)
         
-        # 日付列が見つからない場合は、グループ・名前・合計列以外を日付列とみなす
         if not actual_date_cols:
             skip = [v_group_col, v_name_col, "合計実働", "休憩合計", "欠員メッセージ"]
             actual_date_cols = [c for c in v_view.columns if c not in skip]
         
-        # 日付列を日付順にソート
         def extract_day(col_name):
             digits = "".join(filter(str.isdigit, str(col_name).split('(')[0]))
             return int(digits) if digits.isdigit() else 999
@@ -3893,7 +3417,6 @@ if mode == "確定シフト閲覧":
         except:
             pass
         
-        # --- 2. 実働合計・休憩合計の再計算（2行合算対応版） ---
         v_view = v_view.fillna("")
         
         recalc_totals = []
@@ -3955,8 +3478,6 @@ if mode == "確定シフト閲覧":
         v_view["合計実働"] = recalc_totals[:len(v_view)]
         v_view["休憩合計"] = recalc_breaks[:len(v_view)]
 
-        # --- 3. 以降は同じ（検索用名前リスト、表示加工、スタイル適用） ---
-        # --- 3. 検索用名前リスト ---
         valid_names = sorted(list(set([str(n).strip() for n in v_view[v_name_col] if str(n).strip() != ""])))
         search_name = st.selectbox(
             "自分の名前を選択してハイライト！✨", 
@@ -3965,25 +3486,19 @@ if mode == "確定シフト閲覧":
             key="highlight_name_select"
         )
         
-# --- 4. ウェブ表示用の加工（4行セットを2行にまとめ、余計な0を消す） ---
         v_display = v_view.copy()
         
-        # 数値型に変換（エラー回避）
         v_display["合計実働"] = pd.to_numeric(v_display["合計実働"], errors='coerce')
         v_display["休憩合計"] = pd.to_numeric(v_display["休憩合計"], errors='coerce')
 
-        # 4行1セット（または2行1セット）でループを回す
-        # Excelから読み込むと、1人あたり4行構成になっていることが多いため
         new_rows = []
         for i in range(0, len(v_display), 2):
-            # i行目の名前が空で、かつ1つ前の行も名前が空なら、それはExcelの計算行(3-4行目)
-            # それらの行は表示から除外する
+
             current_name = str(v_display.iloc[i][v_name_col]).strip()
             if i > 0 and current_name == "" and str(v_display.iloc[i-1][v_name_col]).strip() == "":
                 continue
                 
             if i + 1 < len(v_display):
-                # 1行目に合計を合算
                 total_n = (v_display.at[i, "合計実働"] if pd.notna(v_display.at[i, "合計実働"]) else 0) + \
                           (v_display.at[i+1, "合計実働"] if pd.notna(v_display.at[i+1, "合計実働"]) else 0)
                 total_b = (v_display.at[i, "休憩合計"] if pd.notna(v_display.at[i, "休憩合計"]) else 0) + \
@@ -3992,7 +3507,6 @@ if mode == "確定シフト閲覧":
                 v_display.at[i, "合計実働"] = total_n
                 v_display.at[i, "休憩合計"] = total_b
                 
-                # 2行目の名前と合計を消す（Noneにすることで na_rep="" で消える）
                 v_display.at[i+1, v_name_col] = ""
                 v_display.at[i+1, v_group_col] = ""
                 v_display.at[i+1, "合計実働"] = None
@@ -4002,11 +3516,8 @@ if mode == "確定シフト閲覧":
             if i + 1 < len(v_display):
                 new_rows.append(v_display.iloc[i+1])
 
-        # 余分な計算行を削った新しいデータフレームを作成
         v_display_final = pd.DataFrame(new_rows).reset_index(drop=True)
 
-        # --- 5. スタイル適用と表示 ---
-        # --- 5. スタイル適用と表示 ---
         def style_confirmed_grid(df):
             styles = pd.DataFrame('', index=df.index, columns=df.columns)
             target = str(search_name).strip()
@@ -4015,11 +3526,8 @@ if mode == "確定シフト閲覧":
             for r_idx in range(len(df)):
                 is_second = (r_idx % 2 != 0)
                 
-                # ★ 修正：v_displayの行番号に対応するv_viewの行番号を使う
-                # v_displayとv_viewは同じ行数・同じ順序なので、そのままv_viewの同じ行を参照
                 row_name = str(v_view.iloc[r_idx][v_name_col]).strip()
                 
-                # 2行目の場合は1行目の名前を使う（ハイライト用）
                 if is_second and row_name == "":
                     row_name = str(v_view.iloc[r_idx - 1][v_name_col]).strip()
                 
@@ -4059,28 +3567,21 @@ if mode == "確定シフト閲覧":
                         styles.iloc[r_idx, c_idx] += "color: #E60012; font-weight: bold;"
             return styles
 
-        # 表示実行
         st.dataframe(
             v_display_final.style.apply(style_confirmed_grid, axis=None).format(
                 {"合計実働": "{:.1f}", "休憩合計": "{:.1f}"}, 
-                na_rep="" # ← これで None が空白になる
+                na_rep="" 
             ),
             use_container_width=True, 
             height=600, 
             hide_index=True
         )
 
-# --- 6. ダウンロードボタン (Excel出力) ---
-        # ★ 出力用のデータを正しく作成
-        # v_viewの列構成を確認
-        
-        # 実際の列名を使って出力
-        actual_group_col = v_group_col  # "グループ"
-        actual_name_col = v_name_col    # "名前"
+        actual_group_col = v_group_col  
+        actual_name_col = v_name_col    
         
         export_cols = [actual_group_col, actual_name_col] + actual_date_cols + ["合計実働", "休憩合計"]
         
-        # ★ 列が実際に存在するか確認
         missing_cols = [c for c in export_cols if c not in v_view.columns]
         if missing_cols:
             st.error(f"出力に必要な列が見つかりません: {missing_cols}")
@@ -4096,14 +3597,12 @@ if mode == "確定シフト閲覧":
                 workbook = writer.book
                 worksheet = workbook.add_worksheet('確定シフト')
                 
-                # 印刷設定
                 worksheet.set_portrait()
                 worksheet.set_paper(9)
                 worksheet.set_margins(0.3, 0.3, 0.3, 0.3)
                 worksheet.center_horizontally()
                 worksheet.fit_to_pages(1, 0)
                 
-                # タイトル行
                 title_format = workbook.add_format({
                     'bold': True,
                     'size': 22,
@@ -4120,7 +3619,6 @@ if mode == "確定シフト閲覧":
                 
                 worksheet.set_row(1, 8)
                 
-                # 書式定義
                 fmt_header = workbook.add_format({
                     'bold': True, 'border': 2, 'bg_color': '#D9D9D9', 
                     'align': 'center', 'valign': 'vcenter', 'size': 10, 'font_name': 'Meiryo UI'
@@ -4152,7 +3650,6 @@ if mode == "確定シフト閲覧":
                     'align': 'center', 'valign': 'vcenter', 'size': 9, 'font_name': 'Meiryo UI'
                 })
                 
-                # ヘッダー行
                 header_row = 2
                 worksheet.set_row(header_row, 24)
                 h_list = [h[0] for h in get_month_holidays_list(v_year, v_month)]
@@ -4178,19 +3675,17 @@ if mode == "確定シフト閲覧":
                         except:
                             worksheet.write(header_row, c_idx, col_name, fmt_header)
                 
-                # 列幅
-                worksheet.set_column(0, 0, 5)   # G列
-                worksheet.set_column(1, 1, 16)  # 名前列
+                worksheet.set_column(0, 0, 5)   
+                worksheet.set_column(1, 1, 16)  
                 for i in range(2, 2 + len(actual_date_cols)):
                     worksheet.set_column(i, i, 10)
-                worksheet.set_column(2 + len(actual_date_cols), 2 + len(actual_date_cols), 9)    # 合計実働
-                worksheet.set_column(3 + len(actual_date_cols), 3 + len(actual_date_cols), 9)    # 休憩合計
+                worksheet.set_column(2 + len(actual_date_cols), 2 + len(actual_date_cols), 9)    
+                worksheet.set_column(3 + len(actual_date_cols), 3 + len(actual_date_cols), 9)    
                 
-                # ★ データ行の書き込み（正しい列を参照）
                 t_col_idx = export_cols.index("合計実働")
                 b_col_idx = export_cols.index("休憩合計")
-                g_col_idx = 0  # グループ列は常に0列目
-                n_col_idx = 1  # 名前列は常に1列目
+                g_col_idx = 0  
+                n_col_idx = 1  
                 date_start_idx = 2
                 date_end_idx = date_start_idx + len(actual_date_cols) - 1
                 
@@ -4198,7 +3693,6 @@ if mode == "確定シフト閲覧":
                     xl_row = header_row + 1 + i
                     
                     if i + 1 < len(v_export):
-                        # ★ v_exportから直接データを取得
                         name = str(v_export.iloc[i][actual_name_col]).strip()
                         group = str(v_export.iloc[i][actual_group_col]).strip()
                         sum_work = round(float(v_export.iloc[i]["合計実働"]) + float(v_export.iloc[i+1]["合計実働"]), 1)
@@ -4207,15 +3701,12 @@ if mode == "確定シフト閲覧":
                         worksheet.set_row(xl_row, 22)
                         worksheet.set_row(xl_row + 1, 22)
                         
-                        # グループと名前を2行マージ（正しい列位置に）
                         worksheet.merge_range(xl_row, g_col_idx, xl_row + 1, g_col_idx, group, fmt_merge)
                         worksheet.merge_range(xl_row, n_col_idx, xl_row + 1, n_col_idx, name, fmt_merge)
                         
-                        # 合計列を2行マージ
                         worksheet.merge_range(xl_row, t_col_idx, xl_row + 1, t_col_idx, sum_work, fmt_total)
                         worksheet.merge_range(xl_row, b_col_idx, xl_row + 1, b_col_idx, sum_break, fmt_total)
                         
-                        # 日付データを書き込み
                         for c_idx in range(date_start_idx, date_end_idx + 1):
                             col_name = export_cols[c_idx]
                             val1 = str(v_export.iloc[i][col_name]).strip() if col_name in v_export.columns else ""
@@ -4237,10 +3728,8 @@ if mode == "確定シフト閲覧":
 if mode == "清掃記録":
     st.title("🧹 モップ清掃記録")
 
-    # --- パスワードチェック ---
     if str(pw).strip() != st.session_state.admin_pw_fixed:
         st.warning("管理者用メニューです。パスワードを入力してください。")
-        # スタッフ向けの案内図だけ表示
         try:
             st.image("cleaning_map.png", caption="清掃区画マップ（①〜⑦）", use_container_width=True)
         except:
@@ -4255,8 +3744,6 @@ if mode == "清掃記録":
             3. 店長がこのシステムに最終記録を行います。
             """)
     else:
-        # --- 管理者モード ---
-        # 1. 年月の選択
         col_y, col_m = st.columns(2)
         c_today = date.today()
         year_list_clean = [c_today.year - 1, c_today.year, c_today.year + 1]
@@ -4266,16 +3753,13 @@ if mode == "清掃記録":
         log_sheet_name = f"cleaning_log_v2_{c_year}_{c_month:02}"
         log_state_key = f"clean_data_v2_{c_year}_{c_month}"
 
-        # マップ画像を大きく表示
         try:
             st.image("cleaning_map.png", caption="清掃区画マップ（①〜⑦）", width=700)
         except:
             st.error("画像ファイル 'cleaning_map.png' が見つかりません。")
 
-        # 2. データの読み込み
         if log_state_key not in st.session_state:
             with st.spinner("データを読み込み中..."):
-                # 既存シートの確認
                 raw_gc = None
                 if hasattr(conn, "_client"): raw_gc = conn._client
                 elif hasattr(conn, "client") and hasattr(conn.client, "_client"): raw_gc = conn.client._client
@@ -4291,7 +3775,6 @@ if mode == "清掃記録":
                 sundays = get_sundays(c_year, c_month)
                 day_labels = [s.strftime("%m/%d") for s in sundays]
 
-                # 区画の定義 ①〜⑦
                 areas = [f"{i}区画" for i in range(1, 8)]
 
                 if r_raw is None or r_raw.empty:
@@ -4313,10 +3796,8 @@ if mode == "清掃記録":
 
         display_log_df = st.session_state[log_state_key]
 
-        # 3. 入力フォーム（エディタ）
         st.subheader("📝 清掃実施チェック")
         with st.form(key=f"clean_form_v2_{log_sheet_name}"):
-            # ①〜⑦の列設定を一気に作る
             column_config = {f"{i}区画": st.column_config.CheckboxColumn(f"{i}", width="small") for i in range(1, 8)}
             column_config["担当者/一言メモ"] = st.column_config.TextColumn("一言メモ", width="medium")
 
@@ -4334,7 +3815,6 @@ if mode == "清掃記録":
                     time.sleep(1)
                     st.rerun()
 
-        # 4. Excel出力（画像埋め込み機能付き）
         st.markdown("---")
         st.subheader("📊 印刷用Excel出力")
         
@@ -4346,40 +3826,34 @@ if mode == "清掃記録":
 
             buffer_clean = io.BytesIO()
             with pd.ExcelWriter(buffer_clean, engine='xlsxwriter') as writer:
-                # 1. 開始行を下げる
                 export_df.to_excel(writer, sheet_name='清掃報告書', startrow=5, startcol=0)
                 workbook  = writer.book
                 worksheet = writer.sheets['清掃報告書']
                 
-                # A4縦・中央配置
                 worksheet.set_portrait()
                 worksheet.center_horizontally()
                 worksheet.set_margins(0.5, 0.5, 0.5, 0.5)
 
-                # 書式
                 fmt_title = workbook.add_format({'bold': True, 'size': 22, 'align': 'center', 'valign': 'vcenter'})
                 fmt_header = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'size': 12})
                 fmt_data = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'size': 14})
                 fmt_done = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'size': 14, 'font_color': '#FF0000', 'bold': True})
                 fmt_stamp = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'top', 'size': 11})
 
-                # タイトル（1行目を高くしてドーンと出す）
                 worksheet.set_row(1, 45)
                 worksheet.merge_range('A2:I2', f"ジョイフル小倉店 {c_year}年{c_month}月 モップ清掃報告書", fmt_title)
 
-                # 列幅を広げる
-                worksheet.set_column('A:A', 15) # 日付
-                worksheet.set_column('B:H', 7)  # ①〜⑦
-                worksheet.set_column('I:I', 40) # メモ
+                worksheet.set_column('A:A', 15) 
+                worksheet.set_column('B:H', 7)  
+                worksheet.set_column('I:I', 40) 
 
-                # ヘッダーと行の高さを大きく
                 worksheet.set_row(5, 30)
                 headers = ["日付", "①", "②", "③", "④", "⑤", "⑥", "⑦", "一言メモ"]
                 for c_idx, val in enumerate(headers):
                     worksheet.write(5, c_idx, val, fmt_header)
 
                 for r_idx, (date_label, row) in enumerate(export_df.iterrows()):
-                    worksheet.set_row(6 + r_idx, 45) # データの行をかなり高く
+                    worksheet.set_row(6 + r_idx, 45) 
                     worksheet.write(6 + r_idx, 0, date_label, fmt_data)
                     for c_idx in range(1, 8):
                         val = row[f"{c_idx}区画"]
@@ -4387,14 +3861,12 @@ if mode == "清掃記録":
                         worksheet.write(6 + r_idx, c_idx, val, fmt)
                     worksheet.write(6 + r_idx, 8, row["担当者/一言メモ"], fmt_data)
 
-                # 判子欄（表の右下に大きく）
                 worksheet.write('I12', '店長確認印', fmt_stamp)
                 worksheet.merge_range('I13:I15', '', fmt_stamp)
 
-                # 画像を巨大化して、下の余白を完全に埋める
                 try:
                     worksheet.insert_image('A11', 'cleaning_map.png', {
-                        'x_scale': 0.385, # 85%まで拡大
+                        'x_scale': 0.385, 
                         'y_scale': 0.4,
                         'x_offset': 10,
                         'y_offset': 6
@@ -4408,14 +3880,12 @@ if mode == "清掃記録":
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-# mode == "清掃記録" の管理者用エリア（pw == "1234" の中）の最後に追加
     if str(pw).strip() == st.session_state.admin_pw_fixed:
         st.markdown("---")
         st.subheader("🖨️ 掲示用ワークシート(4ヶ月分)の作成")
         st.write("A4縦1枚に4ヶ月分のチェック欄とマップをまとめます。")
         
         c_today = date.today()
-        # 年と期間の選択
         col_y_clean, col_p_clean = st.columns(2)
         target_y_clean = col_y_clean.selectbox("作成年", [c_today.year, c_today.year + 1], key="y_clean_v3")
         target_p_clean = col_p_clean.selectbox("期間を選択", ["1-4月", "5-8月", "9-12月"], key="p_clean_v3")
@@ -4436,7 +3906,6 @@ if mode == "清掃記録":
 if mode == "シフトアップロード":
     st.title("📤 確定シフトのアップロード・公開")
 
-    # 店舗専用のパスワードで認証
     if str(pw).strip() != st.session_state.admin_pw_fixed:
         st.warning("店長専用メニューです。管理者パスワードを入力してください。")
     else:
@@ -4450,7 +3919,6 @@ if mode == "シフトアップロード":
             4. プレビューで内容を確認し、「確定シフトを公開する」をクリックします。
             """)
 
-        # --- 1. アップロード先の年月とシート名を定義 ---
         col_up1, col_up2 = st.columns(2)
         today_up = get_japan_today()
         with col_up1:
@@ -4458,16 +3926,13 @@ if mode == "シフトアップロード":
         with col_up2:
             up_target_month = st.selectbox("アップロード先の月", range(1, 13), index=today_up.month - 1)
 
-        # ★ 保存先シート名をここで確実に定義
         target_sheet = f"shift_{up_target_year}_{up_target_month:02}"
 
         up_file = st.file_uploader("修正済みExcelファイル(xlsx)を選択してください", type="xlsx")
         
         if up_file:
-            # Excelを読み込む（ヘッダーなしで全体を読み込む）
             f_df_raw = pd.read_excel(up_file, sheet_name=0, header=None)
             
-            # --- 2. ヘッダー行の自動検出 ---
             header_row_idx = 0
             for idx, row in f_df_raw.iterrows():
                 row_str = "".join([str(x) for x in row.values])
@@ -4475,19 +3940,14 @@ if mode == "シフトアップロード":
                     header_row_idx = idx
                     break
             
-            # ヘッダーを適用してデータを切り出す
             f_df = f_df_raw.iloc[header_row_idx:].reset_index(drop=True)
             f_df.columns = [str(c).strip() for c in f_df.iloc[0]]
             f_df = f_df.iloc[1:].reset_index(drop=True)
 
-            # --- 3. データのクレンジング (f_cleanの作成) ---
-            # 不要な空行やヘッダー文字が含まれる行を除去
             ignore_list = ["名前", "グループ", "合計実働", "休憩合計", "G", "nan", "None"]
-            # 1列目か2列目に名前があるはずなので、そこを基準に掃除
             name_col_name = f_df.columns[1] if len(f_df.columns) > 1 else f_df.columns[0]
             f_clean = f_df[~f_df[name_col_name].astype(str).str.contains("|".join(ignore_list), na=False)].copy()
             
-            # 列名の重複を防ぐ（Pandasエラー対策）
             new_cols = []
             c_counts = {}
             for c in f_clean.columns:
@@ -4502,14 +3962,11 @@ if mode == "シフトアップロード":
 
             st.success(f"✅ ファイルを読み込みました。対象：{target_sheet}")
             st.write("▼ 公開内容のプレビュー（先頭4名分）")
-            st.dataframe(f_clean.head(8), use_container_width=True) # 2行1セットなので8行
+            st.dataframe(f_clean.head(8), use_container_width=True) 
             
-            # --- 4. 保存実行ボタン ---
             if st.button(f"🚀 {up_target_year}年{up_target_month}月の確定シフトを公開する", use_container_width=True):
                 with st.spinner("労働時間を再計算してスプレッドシートを更新中..."):
                     try:
-                        # 2行1セットでの時間再計算（合計実働・休憩合計の列を更新）
-                        # ※calc_work_and_break は既存の関数を使用
                         date_cols = [c for c in f_clean.columns if "(" in str(c) or str(c).isdigit()]
                         
                         final_nets = []
@@ -4523,7 +3980,6 @@ if mode == "シフトアップロード":
                                 v1 = str(f_clean.iloc[i][c])
                                 v2 = str(f_clean.iloc[i+1][c]) if i+1 < len(f_clean) else ""
                                 
-                                # 2行合算で計算
                                 def get_h(v):
                                     if "-" not in str(v): return 0.0
                                     try:
@@ -4535,24 +3991,20 @@ if mode == "シフトアップロード":
                                 total_raw = get_h(v1) + get_h(v2)
                                 brk = 1.0 if total_raw > 8.001 else (0.75 if total_raw > 6.001 else 0.0)
                                 
-                                # 実働を1行目、休憩を2行目の見えない場所に集計（表示ロジックに合わせる）
                                 row1_h += (total_raw - brk)
                                 row1_b += brk
                             
-                            final_nets.extend([round(row1_h, 1), 0.0]) # 2行目は0
+                            final_nets.extend([round(row1_h, 1), 0.0]) 
                             final_brks.extend([round(row1_b, 1), 0.0])
 
-                        # データの更新
                         f_clean["合計実働"] = final_nets[:len(f_clean)]
                         f_clean["休憩合計"] = final_brks[:len(f_clean)]
                         
-                        # 1列目をインデックスにして保存
                         save_df = f_clean.set_index(f_clean.columns[0])
                         
                         if save_sheet_robust(save_df, target_sheet):
                             st.cache_data.clear()
                             
-                            # --- 5. LINE通知 ---
                             line_msg = (
                                 f"📢 {st.session_state.store_name}\n"
                                 f"確定シフトが公開されました！✨\n\n"
@@ -4574,17 +4026,13 @@ if mode == "シフトアップロード":
 if mode == "レジ締め作業":
     st.title("💰 レジ締め作業")
 
-    # --- 0. カラー設定のCSS注入 ---
     st.markdown("""
         <style>
-        /* フロント用のスライダー（オレンジ） */
         .front-box { border-left: 10px solid #FF8C00; padding-left: 15px; margin-bottom: 20px; }
-        /* キッチン用のスライダー（グリーン） */
         .kitchen-box { border-left: 10px solid #28A745; padding-left: 15px; margin-bottom: 20px; }
         </style>
     """, unsafe_allow_html=True)
 
-    # 1. 準備
     today_now = get_japan_today()
     date_str = today_now.strftime("%Y/%m/%d")
     shift_sheet = f"shift_{today_now.year}_{today_now.month:02}"
@@ -4600,12 +4048,10 @@ if mode == "レジ締め作業":
         elif total_h >= 6.0: return 0.75
         return 0.0
 
-    # --- 2. データの初期化 ---
     if "daily_layout_list" not in st.session_state:
         with st.spinner("データを準備中..."):
             initial_list = []
             existing_data = load_sheet_no_cache(layout_sheet, pd.DataFrame())
-            
             day_exists = False
             if not existing_data.empty and "日付" in existing_data.columns:
                 existing_day = existing_data[existing_data["日付"] == date_str]
@@ -4640,7 +4086,6 @@ if mode == "レジ締め作業":
     if "daily_calc_results" not in st.session_state:
         st.session_state.daily_calc_results = None
 
-    # --- 3. スタッフの追加機能 ---
     st.subheader("👥 スタッフの追加")
     c_add1, c_add2 = st.columns([3, 1])
     with c_add1:
@@ -4654,7 +4099,6 @@ if mode == "レジ締め作業":
             })
             st.rerun()
 
-    # --- 4. メイン入力フォーム ---
     st.markdown("---")
     st.info("💡 名前の変更や時間の微調整が可能です。最後に「保存ボタン」で確定してください。")
     
@@ -4667,7 +4111,6 @@ if mode == "レジ締め作業":
             role = item["役割"]
             start, end = item["時間"]
             
-            # 色分け用のコンテナ
             color_class = "front-box" if role == "フロント" else "kitchen-box"
             
             st.markdown(f'<div class="{color_class}">', unsafe_allow_html=True)
@@ -4675,21 +4118,18 @@ if mode == "レジ締め作業":
             row_col1, row_col2, row_col3, row_col4 = st.columns([2.5, 2, 5, 1])
             
             with row_col1:
-                # 【名前を選択可能に】ドロップダウンにして、変更しても時間は維持される
                 try:
                     name_idx = ALL_NAMES.index(name) + 1
                 except:
                     name_idx = 0
                 updated_name = st.selectbox(f"名前_{i}", ["(選択なし)"] + ALL_NAMES, index=name_idx, key=f"name_sel_{i}", label_visibility="collapsed")
                 
-                # 休憩表示
                 total_h = end - start
                 brk_h = get_break_time(total_h)
                 calc_text = f"({total_h:g} - {brk_h:g})" if brk_h > 0 else f"({total_h:g})"
                 st.caption(f"{calc_text} ➔ 実働:{total_h - brk_h:g}h")
             
             with row_col2:
-                # 役割の選択（W以外でも変更可能にして柔軟性をアップ）
                 updated_role = st.selectbox(f"役割_{i}", ["フロント", "キッチン"], 
                                     index=0 if role == "フロント" else 1, key=f"role_{i}")
             
@@ -4725,7 +4165,6 @@ if mode == "レジ締め作業":
                 net_work = total_work - brk
                 day_total_net += net_work
                 
-                # A. 人数表計算
                 ts = s
                 while ts < e:
                     h_idx = int(ts)
@@ -4734,7 +4173,6 @@ if mode == "レジ締め作業":
                         else: hourly_k_count[h_idx] += 0.25
                     ts += 0.25
 
-                # B. 実働内訳計算（後ろから休憩を引く）
                 rem_brk = brk
                 ts = s
                 while ts < e:
@@ -4774,7 +4212,6 @@ if mode == "レジ締め作業":
             st.success(f"{date_str} の実績を保存しました！")
             st.rerun()
 
-    # --- 5. 集計結果の表示 ---
     if st.session_state.daily_calc_results:
         res = st.session_state.daily_calc_results
         st.markdown("---")
