@@ -98,7 +98,7 @@ Joyful-Shiftは、ファミリーレストラン「ジョイフル」の複雑�
 
 店長は最終確認・微調整のみで完成できます。
 
-一人一人の実働時間の合計や週希望日数に対する充足率などを動的に表示しているため、変動費の計算や全員にとって満足度の高いシフトかどうかが一目でわかる
+一人一人の実働時間の合計や週希望日数に対する充足率などを動的に表示しているため、変動費の計算や全員にとって満足度の高いシフトかどうかが一目でわかります。
 
 ---
 
@@ -108,7 +108,7 @@ Joyful-Shiftは、ファミリーレストラン「ジョイフル」の複雑�
 
 ---
 
-# 🛠 技術スタック
+#  技術スタック
 
 |分類|技術|
 |---|---|
@@ -121,29 +121,73 @@ Joyful-Shiftは、ファミリーレストラン「ジョイフル」の複雑�
 
 ---
 
-# 📷 システム画面
+#  システム画面
 
-## スマホから休み希望入力
+## スマホから休み希望入力（実際に従業員の皆様に説明するときに使った画像です）
 
-> （スクリーンショットを追加）
+<img width="1251" height="1087" alt="messageImage_1783587956821" src="https://github.com/user-attachments/assets/70efc645-b7a1-43eb-b262-9590b678cee2" />
+
+
+
+
+<img width="1051" height="1075" alt="messageImage_1783587976769" src="https://github.com/user-attachments/assets/d2a69e46-0aa3-49d1-9914-7cb785d3ce6f" />
+
+
 
 ---
 
 ## シフト生成画面
 
-> （スクリーンショットを追加）
+<img width="1912" height="1005" alt="messageImage_1782375206314" src="https://github.com/user-attachments/assets/6ea1ea5b-f500-48a8-b669-f2d6cae80da4" />
+
+
+
+<img width="955" height="528" alt="スクリーンショット 2026-07-05 033926" src="https://github.com/user-attachments/assets/10f3bab7-0df9-48a2-92a1-eb6f75cc0ecc" />
+
+
+
+<img width="688" height="403" alt="スクリーンショット 2026-07-03 162656" src="https://github.com/user-attachments/assets/8d58d35e-e7ef-41f5-88d7-1aad2d2e46bc" />
+
+
+
+<img width="959" height="536" alt="スクリーンショット 2026-07-03 162906" src="https://github.com/user-attachments/assets/e0a3735c-f889-40fd-9b0e-22745a9752f7" />
+
+
+
+
+<img width="959" height="537" alt="スクリーンショット 2026-07-05 034033" src="https://github.com/user-attachments/assets/b45f78ae-039f-43b5-b14f-e01217c09ead" />
+
+
+
+<img width="959" height="527" alt="スクリーンショット 2026-07-14 013213" src="https://github.com/user-attachments/assets/f92d6f22-2f46-4d71-85ea-3879be8719b6" />
+
+
+
+
+
 
 ---
 
 ## Excel出力
 
-> （スクリーンショットを追加）
+<img width="4623" height="2863" alt="messageImage_1782374582541" src="https://github.com/user-attachments/assets/a96c9cb9-bdeb-44e8-99a6-18d492d003a6" />
+
+
+
+
+<img width="717" height="403" alt="スクリーンショット 2026-07-03 164156" src="https://github.com/user-attachments/assets/1fe63e4c-6149-4dd9-aeae-21e828f1647c" />
+
 
 ---
 
 ## 管理画面
 
-> （スクリーンショットを追加）
+<img width="956" height="532" alt="スクリーンショット 2026-07-14 013610" src="https://github.com/user-attachments/assets/27752138-3791-4607-ad5b-e52fa5949acd" />
+
+
+<img width="957" height="529" alt="スクリーンショット 2026-07-14 021416" src="https://github.com/user-attachments/assets/d17640b2-c479-4e9b-9477-77b557887e8e" />
+
+
 
 ---
 
