@@ -13,7 +13,6 @@ import requests
 import json
 import jpholiday
 def save_user_request_single_row(user_name, updates_dict, worksheet_name):
-    """特定のユーザーの行だけをピンポイントで更新する（API節約版）"""
     try:
         raw_gc = None
         if hasattr(conn, "_client"): raw_gc = conn._client
@@ -87,7 +86,6 @@ def calc_work_and_break_for_pair(val1, val2):
     
     return net1, brk1, net2, brk2
 def init_session_state():
-    """セッションステートの初期化を一括で行う"""
     defaults = {
         'view_date': (date.today() + timedelta(days=32)).replace(day=1),
         'is_global_admin': False,
@@ -153,7 +151,6 @@ def get_all_stores_cached():
     df.columns = df.columns.str.strip()
     return df
 def get_split_shift(slot_time_str, store_info):
-    """アイドルタイムを考慮してシフトを前後2つに分ける"""
     if not slot_time_str or "-" not in slot_time_str:
         return slot_time_str, ""
     
@@ -185,7 +182,6 @@ def get_split_shift(slot_time_str, store_info):
     mid_start = round(mid_start * 2) / 2
     return f"{float_to_time(s)}-{float_to_time(mid_start)}", f"{float_to_time(mid_start + break_len)}-{float_to_time(e)}"
 def get_month_holidays_list(y, m):
-    """指定した年月の祝日を [(日, 名前), ...] の形式で返す"""
     last_day = calendar.monthrange(y, m)[1]
     start_date = date(y, m, 1)
     end_date = date(y, m, last_day)
@@ -194,7 +190,6 @@ def get_month_holidays_list(y, m):
     return [(h[0].day, h[1]) for h in h_list]
 JST = timezone(timedelta(hours=+9), 'JST')
 def get_kitakyushu_events(y, m):
-    """北九州市・小倉周辺の主要イベント情報を返す"""
     fixed_events = {
         1: [(10, "北九州市二十歳の記念式典（メディアドーム）")],
         2: [(15, "北九州マラソン（周辺交通規制あり）")],
@@ -274,7 +269,6 @@ def export_cleaning_handwriting_sheet(year, period_label):
 def get_japan_today():
     return datetime.now(JST).date()
 def send_line_notification(message):
-    """LINE Messaging APIを使ってグループに通知を送る"""
     LINE_ACCESS_TOKEN = "CWtJrVJ9DydSnL/meqMN5K8+9gV3j3zLWjlTFHuHbj9K7wNPgZah76+RzB77c/1ASW+IReRwpVetUSavMIitb85I7pmCp7hfJpY7931zzr6INTNzdFPBVXgnMehg5j+LN9bxO6aY1AIXM/k5cAwr0QdB04t89/1O/w1cDnyilFU="
     LINE_DESTINATION_ID = "U627c8971cff4e882b7f8673addc08ffa"
     
@@ -307,7 +301,6 @@ def load_sheet_no_cache(worksheet_name, default_df):
     except Exception:
         return default_df
 def get_sundays(year, month):
-    """指定された年月のすべての日曜日の日付を取得する"""
     sundays = []
     cal = calendar.Calendar(firstweekday=calendar.MONDAY)
     for day in cal.itermonthdates(year, month):
@@ -315,7 +308,6 @@ def get_sundays(year, month):
             sundays.append(day)
     return sundays
 def calc_work_and_break(val):
-    """'10:00-18:00' などの文字列から実働と休憩を計算（単体用・変更なし）"""
     val_str = str(val).strip()
     if val_str == "" or val_str in ["nan", "None", "✖", "FALSE", "False"]:
         return 0.0, 0.0
@@ -347,7 +339,6 @@ def calc_work_and_break(val):
         return 0.0, 0.0
 
 def calc_work_and_break_combined(val1, val2):
-    """2つの時間枠（前半・後半）を合算して正しい休憩を計算する【新関数】"""
     net1, brk1 = calc_work_and_break(val1)
     net2, brk2 = calc_work_and_break(val2)
     
@@ -456,7 +447,6 @@ def load_sheet_cached(worksheet_name):
         return None
 
 def save_sheet_robust(df, worksheet_name, target_url=None):
-    """保存時にインデックス（名前）が数字にならないよう強制ガードする修正版"""
     if target_url is None:
         target_url = SPREADSHEET_URL
         
@@ -517,7 +507,6 @@ def load_confirmed_shift(sheet_name):
     except Exception:
         return pd.DataFrame()
 def time_to_float(time_str):
-    """'10:30' -> 10.5 への変換"""
     try:
         h, m = map(int, time_str.split(':'))
         return h + m / 60.0
@@ -525,12 +514,10 @@ def time_to_float(time_str):
         return 10.0
 f_to_t = time_to_float
 def float_to_time(val):
-    """10.75 -> '10:45' への変換"""
     h = int(val)
     m = int((val - h) * 60)
     return f"{h:02d}:{m:02d}"
 def validate_and_fix_date_columns(df, year, month):
-    """日付列を検証し、不足している日付は空列として追加する"""
     num_days = calendar.monthrange(year, month)[1]
     date_cols = []
     for d in range(1, num_days + 1):
