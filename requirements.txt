@@ -1,10 +1,8 @@
 streamlit
 pandas
-xlsxwriter
 st-gsheets-connection
-openpyxl
-jpholiday
-google-api-python-client
 google-genai
-streamlit-gsheets
+jpholiday
+xlsxwriter
+openpyxl
 requests
