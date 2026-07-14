@@ -1508,33 +1508,38 @@ if mode == "休み希望入力":
                 st.caption("日付が選択されていません。上のボックスで日を選んでください。")
             else:
                 for day_col in selected_days:
+                    # コンテナで日ごとに区切る
                     with st.container(border=True):
-                        c1, c2 = st.columns([1, 5])
-                        with c1:
-                            d_num = day_col.split('(')[0]
-                            st.markdown(f"<h2 style='text-align:center;'>{d_num}</h2><p style='text-align:center;'>日</p>", unsafe_allow_html=True)
-                        with c2:
-                            existing_val = user_memos.get(day_col, "")
-                            # --- 修正点：text_input を text_area にして大きくする ---
-                            input_val = st.text_area(
-                                f"{day_col} の詳細要望", 
-                                value=existing_val,
-                                placeholder="例: 19:00以降なら出勤可能です。\nラストまで入れます。",
-                                key=f"memo_area_{user}_{day_col}",
-                                height=100, # 高さを指定して大きく見せる
-                                label_visibility="collapsed"
-                            )
-                            new_memos_to_save[day_col] = input_val
+                        # --- 修正ポイント：columnsを使わず、縦に並べる ---
+                        d_num = day_col.split('(')[0]
+                        # 日付をラベルとして上に表示
+                        st.markdown(f"📅 **{day_col} の要望**")
+                        
+                        existing_val = user_memos.get(day_col, "")
+                        
+                        # 入力欄を横いっぱいに表示
+                        input_val = st.text_area(
+                            label=f"{day_col}の要望", # ラベルは一応設定（非表示にする）
+                            value=existing_val,
+                            placeholder="例: 19:00以降なら出勤可能です。\nラストまで入れます。",
+                            key=f"memo_area_{user}_{day_col}",
+                            height=120, # スマホで入力しやすい高さ
+                            label_visibility="collapsed" # 余計な隙間を消す
+                        )
+                        new_memos_to_save[day_col] = input_val
 
             # キャンセルされた日の清掃
             for day_col in column_names:
                 if day_col not in selected_days:
                     new_memos_to_save[day_col] = ""
 
+# --- ボタン部分の修正 ---
             st.write("")
+            # columns([1, 1]) だとスマホで潰れることがあるため、
+            # あえて分けないか、CSSでボタンの高さを固定します
             col_save, col_cancel = st.columns(2)
             with col_save:
-                submit_btn = st.form_submit_button("💾 休みと要望をすべて保存", use_container_width=True, type="primary")
+                submit_btn = st.form_submit_button("💾 休みと要望を保存", use_container_width=True, type="primary")
             with col_cancel:
                 cancel_btn = st.form_submit_button("✖ 閉じる", use_container_width=True)
 
