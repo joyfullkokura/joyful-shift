@@ -14,6 +14,8 @@ import json
 import jpholiday
 from google import genai
 import json
+from logic_ai import parse_requests_bundled
+from logic_sheet import append_parsed_data
 def save_user_request_single_row(user_name, updates_dict, worksheet_name):
     try:
         raw_gc = None
@@ -1407,56 +1409,74 @@ if mode == "休み希望入力":
             del st.session_state.editing_user
             st.stop()
 
-        # ★★★ ここで変数を定義します ★★★
+        # データの準備
         try:
-            # 1. 休みチェックデータの準備 (user_status_clean)
-            # display_df (休み希望シート) から該当ユーザーの1行を取得して辞書にする
+            # 1. 休みチェックデータの準備
             raw_user_data = display_df.loc[user].copy()
             user_status_clean = {k: (str(v).upper().strip() in ["TRUE", "1", "1.0", "YES"]) for k, v in raw_user_data.items()}
             
-            # 2. 要望メモデータの準備 (user_memos)
-            # memo_df (メモシート) から該当ユーザーの1行を取得。データがなければ空文字で埋める
-            if user in memo_df.index:
-                user_memos = memo_df.loc[user].to_dict()
-            else:
-                user_memos = {col: "" for col in column_names}
+            # 2. 要望メモデータの準備
+            user_memos = memo_df.loc[user].to_dict() if user in memo_df.index else {col: "" for col in column_names}
+
+            # 3. 月間ルールの準備
+            RULE_SHEET = f"rules_{year}_{month:02}"
+            if f"monthly_rule_{user}" not in st.session_state:
+                try:
+                    rule_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=RULE_SHEET, ttl=0)
+                    if rule_raw is not None and not rule_raw.empty:
+                        rule_df = rule_raw.set_index(rule_raw.columns[0])
+                        st.session_state[f"monthly_rule_{user}"] = rule_df.at[user, "ルール"] if user in rule_df.index else ""
+                    else:
+                        st.session_state[f"monthly_rule_{user}"] = ""
+                except:
+                    st.session_state[f"monthly_rule_{user}"] = ""
                 
         except Exception as e:
             st.error(f"データの準備中にエラーが発生しました: {e}")
             st.stop()
-        # ★★★ 定義ここまで ★★★
 
-        # --- 以下、カレンダーの描画やmultiselectなどの既存コードに続く ---
-        # 強力なグリッドCSS（カレンダー用）
-        st.markdown("""
-            <style>
-            [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
-                display: grid !important;
-                grid-template-columns: repeat(7, 1fr) !important;
-                gap: 2px !important;
-            }
-            [data-testid="stForm"] [data-testid="column"] {
-                width: auto !important;
-                min-width: 0px !important;
-            }
-            .cal-num { text-align: center; font-size: 0.8rem; font-weight: bold; margin-bottom: 0px; }
-            </style>
-        """, unsafe_allow_html=True)
-
+        # ★★★ スクロール機能を追加：ここから ★★★
         st.markdown('<div id="scroll_target"></div>', unsafe_allow_html=True)
-        components.html(f"<script>window.parent.document.getElementById('scroll_target').scrollIntoView({{behavior: 'smooth', block: 'start'}});</script>", height=0)
-
-# --- 3. 個別入力エリア ---
-        # (中略：既存のデータ準備部分)
-
+        components.html(
+            f"""
+            <script>
+                var target = window.parent.document.getElementById('scroll_target');
+                if (target) {{
+                    target.scrollIntoView({{behavior: 'smooth', block: 'start'}});
+                }}
+            </script>
+            """,
+            height=0
+        )
+        # ★★★ スクロール機能を追加：ここまで ★★★
         st.divider()
-        st.subheader(f"📅 {user} さんの入力")
+        st.subheader(f"📅 {user} さんの入力画面")
 
-        # --- A. カレンダー部分（休みチェック） ---
-        # ここはフォームの中で一気に保存したいので、カレンダーはフォーム内に入れます
-        with st.form(key=f"ultra_tight_cal_{user}_main"):
-            st.write("### ① 休みたい日にチェックを入れてください")
-            # (既存のカレンダー描画ロジック)
+        # 【修正ポイント】日付選択だけをフォームの外に出す（これで画面が即座に切り替わる）
+        initially_selected_days = [d for d, msg in user_memos.items() if str(msg).strip() != ""]
+        selected_days = st.multiselect(
+            "例外的な要望（時間指定など）を書きたい日を選択してください",
+            options=column_names,
+            default=initially_selected_days,
+            key=f"memo_days_sel_{user}"
+        )
+
+        # ★★★ ここから「たった一つの大きなフォーム」を開始 ★★★
+        with st.form(key=f"master_form_{user}"):
+            
+            # 1. 今月全体のスタンス
+            st.write("🌟 **今月全体のスタンス・共通ルール**")
+            monthly_rule = st.text_area(
+                "「土曜はいつも18時以降」など（※AI解析なし・店長確認用）",
+                value=st.session_state[f"monthly_rule_{user}"],
+                key=f"monthly_area_{user}",
+                height=70
+            )
+
+            st.markdown("---")
+
+            # 2. カレンダー（休みチェック）
+            st.write("📅 **休みたい日にチェック（✔）**")
             calendar.setfirstweekday(calendar.SUNDAY)
             cal = calendar.monthcalendar(year, month)
             weekdays_jp = ["日", "月", "火", "水", "木", "金", "土"]
@@ -1464,7 +1484,7 @@ if mode == "休み希望入力":
             h_cols = st.columns(7)
             for i, label in enumerate(weekdays_jp):
                 color = "red" if i == 0 else "blue" if i == 6 else "#333"
-                h_cols[i].markdown(f"<p style='text-align:center; color:{color}; font-size:0.7rem; font-weight:bold; margin-bottom:0;'>{label}</p>", unsafe_allow_html=True)
+                h_cols[i].markdown(f"<p style='text-align:center; color:{color}; font-weight:bold; margin:0;'>{label}</p>", unsafe_allow_html=True)
 
             new_updates = {}
             for week in cal:
@@ -1474,170 +1494,90 @@ if mode == "休み希望入力":
                         cols[i].write(""); continue
                     target_col = column_names[day-1]
                     current_val = user_status_clean.get(target_col, False)
-                    num_color = "red" if i == 0 else "blue" if i == 6 else "black"
                     with cols[i]:
-                        st.markdown(f"<p class='cal-num' style='color:{num_color};'>{day}</p>", unsafe_allow_html=True)
+                        st.markdown(f"<p class='cal-num'>{day}</p>", unsafe_allow_html=True)
                         new_updates[target_col] = st.checkbox("", value=current_val, key=f"u_cb_{user}_{day}")
-            
-            # フォーム内の「一時的な保存」ボタン（カレンダーだけ確定させたい人向け）
-            # もしくは、下の「すべて保存」で一気にやるため、ここは説明だけでもOK
-            st.write("※下の「すべて保存」ボタンを押すまで反映されません。")
-            st.form_submit_button("↑ カレンダーのチェックを一旦保持（画面は閉じません）")
 
-        st.markdown("---")
+            st.markdown("---")
 
-        # --- B. 要望メモ部分（カレンダーの下に配置） ---
-        st.write("### ② 日付ごとの特別な要望（時間指定など）")
-        st.info("「19時以降なら出れる」「14時まで」など、日ごとに要望を入力できます。")
-
-        initially_selected_days = [d for d, msg in user_memos.items() if str(msg).strip() != ""]
-        
-        # フォームの外に置くことで、選択した瞬間に下の入力欄が出現する
-        selected_days = st.multiselect(
-            "要望を入力したい日を選択してください",
-            options=column_names,
-            default=initially_selected_days,
-            key=f"memo_days_sel_{user}"
-        )
-
-        # 要望入力専用のフォーム
-        with st.form(key=f"memo_input_form_{user}"):
+            # 3. 個別要望（テキストエリア）
+            st.write("💬 **選択した日の詳細要望**")
             new_memos_to_save = user_memos.copy()
-
             if not selected_days:
-                st.caption("日付が選択されていません。上のボックスで日を選んでください。")
+                st.caption("日付が選択されていません。")
             else:
                 for day_col in selected_days:
-                    # コンテナで日ごとに区切る
                     with st.container(border=True):
-                        # --- 修正ポイント：columnsを使わず、縦に並べる ---
-                        d_num = day_col.split('(')[0]
-                        # 日付をラベルとして上に表示
-                        st.markdown(f"📅 **{day_col} の要望**")
-                        
+                        st.markdown(f"📅 **{day_col}**")
                         existing_val = user_memos.get(day_col, "")
-                        
-                        # 入力欄を横いっぱいに表示
-                        input_val = st.text_area(
-                            label=f"{day_col}の要望", # ラベルは一応設定（非表示にする）
-                            value=existing_val,
-                            placeholder="例: 19:00以降なら出勤可能です。\nラストまで入れます。",
-                            key=f"memo_area_{user}_{day_col}",
-                            height=120, # スマホで入力しやすい高さ
-                            label_visibility="collapsed" # 余計な隙間を消す
-                        )
+                        input_val = st.text_area(f"{day_col}要望", value=existing_val, key=f"memo_area_{user}_{day_col}", height=80, label_visibility="collapsed")
                         new_memos_to_save[day_col] = input_val
 
-            # キャンセルされた日の清掃
+            # 選択外のメモをクリア
             for day_col in column_names:
-                if day_col not in selected_days:
-                    new_memos_to_save[day_col] = ""
+                if day_col not in selected_days: new_memos_to_save[day_col] = ""
 
-# --- ボタン部分の修正 ---
+            # 4. 保存ボタン（これ一つで完結！）
             st.write("")
-            # columns([1, 1]) だとスマホで潰れることがあるため、
-            # あえて分けないか、CSSでボタンの高さを固定します
-            col_save, col_cancel = st.columns(2)
-            with col_save:
-                submit_btn = st.form_submit_button("💾 休みと要望を保存", use_container_width=True, type="primary")
-            with col_cancel:
-                cancel_btn = st.form_submit_button("✖ 閉じる", use_container_width=True)
+            submit_btn = st.form_submit_button("🚀 休みと要望をすべてまとめて保存！", use_container_width=True, type="primary")
+            if st.form_submit_button("✖ キャンセルして閉じる"):
+                del st.session_state.editing_user
+                st.rerun()
 
-        # --- C. 保存処理（Gemini解析機能・複数日対応版） ---
+        # --- C. 保存処理（AIなし・安定保存版） ---
         if submit_btn:
-            with st.spinner("保存中... AIが複数の要望を一つずつ解析しています..."):
+            with st.spinner("スプレッドシートに保存中..."):
                 try:
-                    success_req = False
-                    success_memo = False
-                    ai_analysis_log = [] # ユーザー表示用の解析結果ログ
-
-                    # スプレッドシート接続準備
+                    # 1. スプレッドシート接続
                     raw_gc = conn._client if hasattr(conn, "_client") else conn.client._client
                     sh = raw_gc.open_by_url(SPREADSHEET_URL)
                     
-                    # 1. 休み希望（チェックボックス）の保存
-                    try:
-                        ws_req = sh.worksheet(REQ_SHEET)
-                        cell_req = ws_req.find(user, in_column=1)
-                        if cell_req:
-                            row_vals = ["TRUE" if new_updates.get(col, False) else "FALSE" for col in column_names]
-                            def get_col_letter(n): return chr(64 + n) if n <= 26 else "A" + chr(64 + n - 26)
-                            end_col = get_col_letter(len(column_names) + 1)
-                            ws_req.update(f"B{cell_req.row}:{end_col}{cell_req.row}", [row_vals])
-                            success_req = True
-                    except: pass
+                    # 共通：列の終端を計算
+                    end_idx = len(column_names) + 1
+                    def get_col_letter(n): return chr(64 + n) if n <= 26 else "A" + chr(64 + n - 26)
+                    range_end = f"{get_col_letter(end_idx)}"
 
-                    # 2. 要望メモ（文字）の保存
-                    try:
-                        ws_list = [w.title for w in sh.worksheets()]
-                        if MEMO_SHEET not in ws_list:
-                            sh.add_worksheet(title=MEMO_SHEET, rows="100", cols="50")
-                            ws_m = sh.worksheet(MEMO_SHEET); ws_m.update("A1", [["名前"] + column_names])
-                            ws_m.update("A2", [[n] for n in ALL_NAMES])
-                        
-                        ws_memo = sh.worksheet(MEMO_SHEET)
-                        cell_memo = ws_memo.find(user, in_column=1)
-                        if cell_memo:
-                            memo_vals = [new_memos_to_save.get(col, "") for col in column_names]
-                            def get_col_letter(n): return chr(64 + n) if n <= 26 else "A" + chr(64 + n - 26)
-                            end_col = get_col_letter(len(column_names) + 1)
-                            ws_memo.update(f"B{cell_memo.row}:{end_col}{cell_memo.row}", [memo_vals])
-                            success_memo = True
-                    except: pass
+                    # 2. 休み希望(✔)保存
+                    ws_req = sh.worksheet(REQ_SHEET)
+                    cell_req = ws_req.find(user, in_column=1)
+                    if cell_req:
+                        row_vals = ["TRUE" if new_updates.get(col, False) else "FALSE" for col in column_names]
+                        ws_req.update(f"B{cell_req.row}:{range_end}{cell_req.row}", [row_vals])
 
-                    # 3. AI解析結果の保存（選択された日をすべてループ解析）
-                    AI_SHEET = f"parsed_{year}_{month:02}"
-                    try:
-                        ws_list = [w.title for w in sh.worksheets()]
-                        if AI_SHEET not in ws_list:
-                            sh.add_worksheet(title=AI_SHEET, rows="500", cols="10")
-                            ws_ai = sh.worksheet(AI_SHEET)
-                            ws_ai.update("A1", [["名前", "日付", "開始", "終了", "原文", "解析日時"]])
-                        else:
-                            ws_ai = sh.worksheet(AI_SHEET)
-                        
-                        # ループ解析：今回「選択」されており、かつ「文字がある」日のみAIに投げる
-                        for day_col in selected_days:
-                            memo_text = new_memos_to_save.get(day_col, "").strip()
-                            if memo_text != "":
-                                # Gemini API呼び出し
-                                parsed = parse_request_with_gemini(memo_text)
-                                now_str = datetime.now(JST).strftime("%Y-%m-%d %H:%M")
-                                
-                                new_ai_row = [
-                                    user, day_col, 
-                                    parsed.get("start"), parsed.get("end"), 
-                                    memo_text, now_str
-                                ]
-                                ws_ai.append_row(new_ai_row)
-                                ai_analysis_log.append(f"{day_col}: {parsed.get('start')}〜{parsed.get('end')}")
+                    # 3. 要望メモ保存
+                    ws_memo = sh.worksheet(MEMO_SHEET)
+                    cell_memo = ws_memo.find(user, in_column=1)
+                    if cell_memo:
+                        memo_vals = [new_memos_to_save.get(col, "") for col in column_names]
+                        ws_memo.update(f"B{cell_memo.row}:{range_end}{cell_memo.row}", [memo_vals])
 
-                    except Exception as e:
-                        st.warning(f"AI解析の一部に失敗しました（保存は継続します）: {e}")
+                    # 4. 月間ルール保存
+                    RULE_SHEET = f"rules_{year}_{month:02}"
+                    ws_list = [w.title for w in sh.worksheets()]
+                    if RULE_SHEET not in ws_list:
+                        sh.add_worksheet(title=RULE_SHEET, rows="100", cols="5")
+                        ws_r = sh.worksheet(RULE_SHEET); ws_r.update("A1", [["名前", "ルール"]])
+                    
+                    ws_rule = sh.worksheet(RULE_SHEET)
+                    cell_rule = ws_rule.find(user, in_column=1)
+                    if cell_rule:
+                        ws_rule.update(f"B{cell_rule.row}", [[monthly_rule]])
+                    else:
+                        ws_rule.append_row([user, monthly_rule])
 
                     # --- 完了処理 ---
-                    # セッション状態（画面表示用）を最新に更新
+                    # セッション状態を更新
                     st.session_state[state_key].loc[user] = pd.Series(new_updates)
                     st.session_state[memo_state_key].loc[user] = pd.Series(new_memos_to_save)
+                    st.session_state[f"monthly_rule_{user}"] = monthly_rule
                     
+                    st.success("✅ 正常に保存されました！")
+                    time.sleep(1)
                     del st.session_state.editing_user 
-                    st.success("✅ 休み希望と全ての要望を保存しました！")
-                    
-                    # AIの解析結果をダイジェストで表示
-                    if ai_analysis_log:
-                        with st.expander("🤖 AIによる時間解析の結果", expanded=True):
-                            for log in ai_analysis_log:
-                                st.write(f"・{log}")
-                    
-                    time.sleep(2) # 結果を見せるために少し長めに待つ
                     st.rerun()
-                        
-                except Exception as e:
-                    st.error(f"保存エラー詳細: {e}")
 
-        if cancel_btn:
-            del st.session_state.editing_user
-            st.rerun()
+                except Exception as e:
+                    st.error(f"🚨 保存中にエラーが発生しました: {e}")
 elif mode == "シフト自動生成（案）":
     if "last_generated_df" not in st.session_state:
         st.session_state.last_generated_df = None
