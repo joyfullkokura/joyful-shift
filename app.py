@@ -1411,48 +1411,58 @@ if mode == "休み希望入力":
 
         # データの準備
         try:
-            # 1. 休みチェックデータの準備
             raw_user_data = display_df.loc[user].copy()
             user_status_clean = {k: (str(v).upper().strip() in ["TRUE", "1", "1.0", "YES"]) for k, v in raw_user_data.items()}
-            
-            # 2. 要望メモデータの準備
             user_memos = memo_df.loc[user].to_dict() if user in memo_df.index else {col: "" for col in column_names}
-
-            # 3. 月間ルールの準備
+            
             RULE_SHEET = f"rules_{year}_{month:02}"
             if f"monthly_rule_{user}" not in st.session_state:
-                try:
-                    rule_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=RULE_SHEET, ttl=0)
-                    if rule_raw is not None and not rule_raw.empty:
-                        rule_df = rule_raw.set_index(rule_raw.columns[0])
-                        st.session_state[f"monthly_rule_{user}"] = rule_df.at[user, "ルール"] if user in rule_df.index else ""
-                    else:
-                        st.session_state[f"monthly_rule_{user}"] = ""
-                except:
-                    st.session_state[f"monthly_rule_{user}"] = ""
-                
-        except Exception as e:
-            st.error(f"データの準備中にエラーが発生しました: {e}")
+                st.session_state[f"monthly_rule_{user}"] = ""
+        except:
             st.stop()
 
-        # ★★★ スクロール機能を追加：ここから ★★★
+        # ★★★ 修正ポイント：スマホでも強制的に横7列にするCSS ★★★
+        st.markdown("""
+            <style>
+            /* フォーム内の横並びブロックを強制的に7列のグリッドにする */
+            [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
+                display: grid !important;
+                grid-template-columns: repeat(7, 1fr) !important;
+                gap: 2px !important;
+            }
+            /* 各列の幅を自動調整し、スマホでの縦積みを禁止する */
+            [data-testid="stForm"] [data-testid="column"] {
+                width: auto !important;
+                min-width: 0px !important;
+            }
+            /* チェックボックスを中央寄せにし、余白を詰める */
+            .stCheckbox {
+                display: flex !important;
+                justify-content: center !important;
+                margin-top: -15px !important;
+            }
+            /* 日付の数字のデザイン */
+            .cal-num {
+                text-align: center;
+                font-size: 0.8rem;
+                font-weight: bold;
+                margin-bottom: 0px;
+                line-height: 1.2;
+            }
+            </style>
+        """, unsafe_allow_html=True)
+
+        # 自動スクロール機能
         st.markdown('<div id="scroll_target"></div>', unsafe_allow_html=True)
         components.html(
-            f"""
-            <script>
-                var target = window.parent.document.getElementById('scroll_target');
-                if (target) {{
-                    target.scrollIntoView({{behavior: 'smooth', block: 'start'}});
-                }}
-            </script>
-            """,
+            f"<script>window.parent.document.getElementById('scroll_target').scrollIntoView({{behavior: 'smooth', block: 'start'}});</script>",
             height=0
         )
-        # ★★★ スクロール機能を追加：ここまで ★★★
+
         st.divider()
         st.subheader(f"📅 {user} さんの入力画面")
 
-        # 【修正ポイント】日付選択だけをフォームの外に出す（これで画面が即座に切り替わる）
+        # 日付選択（要望用）
         initially_selected_days = [d for d, msg in user_memos.items() if str(msg).strip() != ""]
         selected_days = st.multiselect(
             "例外的な要望（時間指定など）を書きたい日を選択してください",
@@ -1461,13 +1471,13 @@ if mode == "休み希望入力":
             key=f"memo_days_sel_{user}"
         )
 
-        # ★★★ ここから「たった一つの大きなフォーム」を開始 ★★★
+        # 巨大な1つのフォーム
         with st.form(key=f"master_form_{user}"):
             
-            # 1. 今月全体のスタンス
+            # 1. 月間共通要望
             st.write("🌟 **今月全体のスタンス・共通ルール**")
             monthly_rule = st.text_area(
-                "「土曜はいつも18時以降」など（※AI解析なし・店長確認用）",
+                "「土曜はいつも18時以降」など",
                 value=st.session_state[f"monthly_rule_{user}"],
                 key=f"monthly_area_{user}",
                 height=70
@@ -1475,12 +1485,13 @@ if mode == "休み希望入力":
 
             st.markdown("---")
 
-            # 2. カレンダー（休みチェック）
+            # 2. カレンダー（ここが強制7列になります）
             st.write("📅 **休みたい日にチェック（✔）**")
             calendar.setfirstweekday(calendar.SUNDAY)
             cal = calendar.monthcalendar(year, month)
             weekdays_jp = ["日", "月", "火", "水", "木", "金", "土"]
             
+            # 曜日ヘッダー
             h_cols = st.columns(7)
             for i, label in enumerate(weekdays_jp):
                 color = "red" if i == 0 else "blue" if i == 6 else "#333"
@@ -1494,9 +1505,11 @@ if mode == "休み希望入力":
                         cols[i].write(""); continue
                     target_col = column_names[day-1]
                     current_val = user_status_clean.get(target_col, False)
+                    num_color = "red" if i == 0 else "blue" if i == 6 else "black"
                     with cols[i]:
-                        st.markdown(f"<p class='cal-num'>{day}</p>", unsafe_allow_html=True)
+                        st.markdown(f"<p class='cal-num' style='color:{num_color};'>{day}</p>", unsafe_allow_html=True)
                         new_updates[target_col] = st.checkbox("", value=current_val, key=f"u_cb_{user}_{day}")
+            # (この後、個別要望エリアと保存ボタンが続きます)
 
             st.markdown("---")
 
