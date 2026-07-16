@@ -1546,18 +1546,21 @@ if mode == "休み希望入力":
                     def get_col_letter(n): return chr(64 + n) if n <= 26 else "A" + chr(64 + n - 26)
                     range_end = f"{get_col_letter(end_idx)}"
 
+                    # 2. 休み希望(✔)保存
                     ws_req = sh.worksheet(REQ_SHEET)
                     cell_req = ws_req.find(user, in_column=1)
                     if cell_req:
                         row_vals = ["TRUE" if new_updates.get(col, False) else "FALSE" for col in column_names]
                         ws_req.update(f"B{cell_req.row}:{range_end}{cell_req.row}", [row_vals])
 
+                    # 3. 要望メモ保存
                     ws_memo = sh.worksheet(MEMO_SHEET)
                     cell_memo = ws_memo.find(user, in_column=1)
                     if cell_memo:
                         memo_vals = [new_memos_to_save.get(col, "") for col in column_names]
                         ws_memo.update(f"B{cell_memo.row}:{range_end}{cell_memo.row}", [memo_vals])
 
+                    # 4. 月間ルール保存
                     RULE_SHEET = f"rules_{year}_{month:02}"
                     ws_list = [w.title for w in sh.worksheets()]
                     if RULE_SHEET not in ws_list:
@@ -1571,6 +1574,8 @@ if mode == "休み希望入力":
                     else:
                         ws_rule.append_row([user, monthly_rule])
 
+                    # --- 完了処理 ---
+                    # セッション状態を更新
                     st.session_state[state_key].loc[user] = pd.Series(new_updates)
                     st.session_state[memo_state_key].loc[user] = pd.Series(new_memos_to_save)
                     st.session_state[f"monthly_rule_{user}"] = monthly_rule
