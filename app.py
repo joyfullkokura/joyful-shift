@@ -1367,7 +1367,6 @@ if mode == "休み希望入力":
                             st.success("✅ 要望メモを保存しました！")
                             st.rerun()
         else:
-            # --- 一般スタッフ向けの閲覧画面 ---
             st.subheader("😪 全体の状況")
             v_tab1, v_tab2 = st.tabs(["📅 休み状況", "💬 要望"])
             with v_tab1:
@@ -1375,7 +1374,6 @@ if mode == "休み希望入力":
             with v_tab2:
                 st.dataframe(memo_df, use_container_width=True, height=400)
 
-    # --- 左側の列：個人入力への誘導ボタン ---
     with col_btn:
         st.write("自分の名前をポチ！⇩")
         st.markdown("""
@@ -1386,21 +1384,18 @@ if mode == "休み希望入力":
                 padding: 0px 5px !important;
                 margin-bottom: 2px !important;
                 border-radius: 4px !important;
-                background-color: #FF8C00 !important; /* ジョイフルオレンジ */
+                background-color: #FF8C00 !important;
                 color: white !important;
             }
             </style>
         """, unsafe_allow_html=True)
 
-        # ALL_NAMESに基づいてボタンを生成
         for name in ALL_NAMES:
-            # すでに何らかの要望が入っている人は、ボタンにアイコンをつけるなどの工夫も可能
             has_memo = name in memo_df.index and any(memo_df.loc[name] != "")
             label = f"💬 {name}" if has_memo else f"{name}"
             
             if st.button(label, key=f"sel_{name}", use_container_width=True):
                 st.session_state.editing_user = name
-# --- 3. 個別入力エリア（名前ボタンが押されたら出現） ---
     if "editing_user" in st.session_state and st.session_state.editing_user is not None:
         user = st.session_state.editing_user
         
@@ -1409,30 +1404,21 @@ if mode == "休み希望入力":
             del st.session_state.editing_user
             st.stop()
 
-# データの準備
         try:
-            # 1. 休みチェックデータの準備
             raw_user_data = display_df.loc[user].copy()
             user_status_clean = {k: (str(v).upper().strip() in ["TRUE", "1", "1.0", "YES"]) for k, v in raw_user_data.items()}
             
-            # 2. 要望メモデータの準備
             user_memos = memo_df.loc[user].to_dict() if user in memo_df.index else {col: "" for col in column_names}
 
-            # 3. ★修正ポイント：月間ルール（rulesシート）を実際に読み込む
             RULE_SHEET = f"rules_{year}_{month:02}"
             
-            # まだセッションにデータがない場合のみ、シートを読みに行く
             if f"monthly_rule_{user}" not in st.session_state:
                 try:
-                    # rulesシートを読み込む（ttl=0で最新を取得）
                     rule_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=RULE_SHEET, ttl=0)
                     
                     if rule_raw is not None and not rule_raw.empty:
-                        # 1列目（名前）をインデックスにする
                         rule_df_temp = rule_raw.set_index(rule_raw.columns[0])
-                        # 該当ユーザーの「ルール」列の値を取得
                         if user in rule_df_temp.index:
-                            # インデックスが一致する行の1列目のデータを取得
                             val = rule_df_temp.loc[user].values[0]
                             st.session_state[f"monthly_rule_{user}"] = str(val) if pd.notna(val) else ""
                         else:
@@ -1440,38 +1426,31 @@ if mode == "休み希望入力":
                     else:
                         st.session_state[f"monthly_rule_{user}"] = ""
                 except Exception:
-                    # シートが存在しない場合は空文字にする
                     st.session_state[f"monthly_rule_{user}"] = ""
                 
         except Exception as e:
             st.error(f"データの読み込み中にエラーが発生しました: {e}")
             st.stop()
-# ★★★ 重なりを解消する最強のグリッドCSS ★★★
         st.markdown("""
             <style>
-            /* 1. フォーム内の横並びを強制7列にする */
             [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
                 display: grid !important;
                 grid-template-columns: repeat(7, 1fr) !important;
                 gap: 0px !important;
             }
-            /* 2. 各日付の箱の幅を調整 */
             [data-testid="stForm"] [data-testid="column"] {
                 width: 100% !important;
                 min-width: 0px !important;
                 padding: 0px !important;
             }
-            /* 3. チェックボックス自体の余白を調整 */
             .stCheckbox {
                 display: flex !important;
                 justify-content: center !important;
                 margin-top: -5px !important; /* 数字との距離を調整 */
             }
-            /* 4. チェックボックスの横にある「見えないラベル」を完全に消す */
             .stCheckbox div[data-testid="stMarkdownContainer"] {
                 display: none !important;
             }
-            /* 5. 数字のデザイン：チェックボックスの上に配置 */
             .cal-num {
                 text-align: center;
                 font-size: 0.8rem;
@@ -1483,7 +1462,6 @@ if mode == "休み希望入力":
             </style>
         """, unsafe_allow_html=True)
 
-        # 自動スクロール機能
         st.markdown('<div id="scroll_target"></div>', unsafe_allow_html=True)
         components.html(
             f"<script>window.parent.document.getElementById('scroll_target').scrollIntoView({{behavior: 'smooth', block: 'start'}});</script>",
@@ -1493,19 +1471,15 @@ if mode == "休み希望入力":
         st.divider()
         st.subheader(f"📅 {user} さんの入力画面")
 
-        # 日付選択（要望用）
         initially_selected_days = [d for d, msg in user_memos.items() if str(msg).strip() != ""]
         selected_days = st.multiselect(
-            "例外的な要望（時間指定など）を書きたい日を選択してください",
             options=column_names,
             default=initially_selected_days,
             key=f"memo_days_sel_{user}"
         )
 
-        # 巨大な1つのフォーム
         with st.form(key=f"master_form_{user}"):
             
-            # 1. 月間共通要望
             st.write("🌟 **今月全体のスタンス・共通ルール**")
             monthly_rule = st.text_area(
                 "「土曜はいつも18時以降」など",
@@ -1516,13 +1490,11 @@ if mode == "休み希望入力":
 
             st.markdown("---")
 
-            # 2. カレンダー（ここが強制7列になります）
             st.write("📅 **休みたい日にチェック（✔）**")
             calendar.setfirstweekday(calendar.SUNDAY)
             cal = calendar.monthcalendar(year, month)
             weekdays_jp = ["日", "月", "火", "水", "木", "金", "土"]
             
-            # 曜日ヘッダー
             h_cols = st.columns(7)
             for i, label in enumerate(weekdays_jp):
                 color = "red" if i == 0 else "blue" if i == 6 else "#333"
@@ -1540,11 +1512,9 @@ if mode == "休み希望入力":
                     with cols[i]:
                         st.markdown(f"<p class='cal-num' style='color:{num_color};'>{day}</p>", unsafe_allow_html=True)
                         new_updates[target_col] = st.checkbox("", value=current_val, key=f"u_cb_{user}_{day}")
-            # (この後、個別要望エリアと保存ボタンが続きます)
 
             st.markdown("---")
 
-            # 3. 個別要望（テキストエリア）
             st.write("💬 **選択した日の詳細要望**")
             new_memos_to_save = user_memos.copy()
             if not selected_days:
@@ -1557,45 +1527,37 @@ if mode == "休み希望入力":
                         input_val = st.text_area(f"{day_col}要望", value=existing_val, key=f"memo_area_{user}_{day_col}", height=80, label_visibility="collapsed")
                         new_memos_to_save[day_col] = input_val
 
-            # 選択外のメモをクリア
             for day_col in column_names:
                 if day_col not in selected_days: new_memos_to_save[day_col] = ""
 
-            # 4. 保存ボタン（これ一つで完結！）
             st.write("")
             submit_btn = st.form_submit_button("🚀 休みと要望をすべてまとめて保存！", use_container_width=True, type="primary")
             if st.form_submit_button("✖ キャンセルして閉じる"):
                 del st.session_state.editing_user
                 st.rerun()
 
-        # --- C. 保存処理（AIなし・安定保存版） ---
         if submit_btn:
             with st.spinner("スプレッドシートに保存中..."):
                 try:
-                    # 1. スプレッドシート接続
                     raw_gc = conn._client if hasattr(conn, "_client") else conn.client._client
                     sh = raw_gc.open_by_url(SPREADSHEET_URL)
                     
-                    # 共通：列の終端を計算
                     end_idx = len(column_names) + 1
                     def get_col_letter(n): return chr(64 + n) if n <= 26 else "A" + chr(64 + n - 26)
                     range_end = f"{get_col_letter(end_idx)}"
 
-                    # 2. 休み希望(✔)保存
                     ws_req = sh.worksheet(REQ_SHEET)
                     cell_req = ws_req.find(user, in_column=1)
                     if cell_req:
                         row_vals = ["TRUE" if new_updates.get(col, False) else "FALSE" for col in column_names]
                         ws_req.update(f"B{cell_req.row}:{range_end}{cell_req.row}", [row_vals])
 
-                    # 3. 要望メモ保存
                     ws_memo = sh.worksheet(MEMO_SHEET)
                     cell_memo = ws_memo.find(user, in_column=1)
                     if cell_memo:
                         memo_vals = [new_memos_to_save.get(col, "") for col in column_names]
                         ws_memo.update(f"B{cell_memo.row}:{range_end}{cell_memo.row}", [memo_vals])
 
-                    # 4. 月間ルール保存
                     RULE_SHEET = f"rules_{year}_{month:02}"
                     ws_list = [w.title for w in sh.worksheets()]
                     if RULE_SHEET not in ws_list:
@@ -1609,8 +1571,6 @@ if mode == "休み希望入力":
                     else:
                         ws_rule.append_row([user, monthly_rule])
 
-                    # --- 完了処理 ---
-                    # セッション状態を更新
                     st.session_state[state_key].loc[user] = pd.Series(new_updates)
                     st.session_state[memo_state_key].loc[user] = pd.Series(new_memos_to_save)
                     st.session_state[f"monthly_rule_{user}"] = monthly_rule
