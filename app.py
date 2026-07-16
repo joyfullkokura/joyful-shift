@@ -1421,33 +1421,39 @@ if mode == "休み希望入力":
         except:
             st.stop()
 
-        # ★★★ 修正ポイント：スマホでも強制的に横7列にするCSS ★★★
+# ★★★ 重なりを解消する最強のグリッドCSS ★★★
         st.markdown("""
             <style>
-            /* フォーム内の横並びブロックを強制的に7列のグリッドにする */
+            /* 1. フォーム内の横並びを強制7列にする */
             [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
                 display: grid !important;
                 grid-template-columns: repeat(7, 1fr) !important;
-                gap: 2px !important;
+                gap: 0px !important;
             }
-            /* 各列の幅を自動調整し、スマホでの縦積みを禁止する */
+            /* 2. 各日付の箱の幅を調整 */
             [data-testid="stForm"] [data-testid="column"] {
-                width: auto !important;
+                width: 100% !important;
                 min-width: 0px !important;
+                padding: 0px !important;
             }
-            /* チェックボックスを中央寄せにし、余白を詰める */
+            /* 3. チェックボックス自体の余白を調整 */
             .stCheckbox {
                 display: flex !important;
                 justify-content: center !important;
-                margin-top: -15px !important;
+                margin-top: -10px !important; /* 数字との距離を調整 */
             }
-            /* 日付の数字のデザイン */
+            /* 4. チェックボックスの横にある「見えないラベル」を完全に消す */
+            .stCheckbox div[data-testid="stMarkdownContainer"] {
+                display: none !important;
+            }
+            /* 5. 数字のデザイン：チェックボックスの上に配置 */
             .cal-num {
                 text-align: center;
                 font-size: 0.8rem;
                 font-weight: bold;
-                margin-bottom: 0px;
-                line-height: 1.2;
+                margin-bottom: 0px !important;
+                padding-bottom: 0px !important;
+                line-height: 1;
             }
             </style>
         """, unsafe_allow_html=True)
