@@ -20,18 +20,16 @@ def parse_requests_bundled(monthly_rule, daily_memos_dict, column_names):
     Reason in Japanese.
     """
 
-    # --- 使える可能性が高いモデルの優先順位リスト ---
-    # 3.5は20回制限なのでリストから外し、制限の緩い Flash 系を並べます
     model_priority = [
-        "models/gemini-2.0-flash",    # 1,500回/日の可能性が高い
-        "models/gemini-flash-latest", # 自動で最適なFlashを選択
-        "models/gemini-1.5-flash-8b",  # 最も制限が緩い超軽量版
-        "models/gemini-3.5-flash"     # 最後の一押し（20回制限）
+        "models/gemini-2.0-flash",    
+        "models/gemini-flash-latest", 
+        "models/gemini-1.5-flash-8b",  
+        "models/gemini-3.5-flash"     
     ]
 
     for model_name in model_priority:
         try:
-            print(f"Trying model: {model_name}...") # デバッグ用
+            print(f"Trying model: {model_name}...")
             response = client.models.generate_content(
                 model=model_name,
                 contents=prompt,
@@ -44,23 +42,18 @@ def parse_requests_bundled(monthly_rule, daily_memos_dict, column_names):
             return json.loads(clean_text)
 
         except Exception as e:
-            # 429 (使いすぎ) エラーの場合、次のモデルへ
             if "429" in str(e):
                 print(f"Model {model_name} exhausted (429). Switching to next...")
                 continue
-            # 503 (混雑) の場合は2秒待って同じモデルで1回だけリトライ
             elif "503" in str(e):
                 time.sleep(2)
                 try:
-                    # 同じモデルでもう一度だけ
                     response = client.models.generate_content(model=model_name, contents=prompt)
                     return json.loads(response.text)
                 except:
                     continue
             else:
-                # その他のエラーはログを出して次へ
                 print(f"Error with {model_name}: {e}")
                 continue
     
-    # 全てのモデルが全滅した場合
     return {"error_detail": "すべての利用可能なAIモデルが制限に達しました。数分待ってからお試しください。"}

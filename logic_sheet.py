@@ -2,7 +2,6 @@ import pandas as pd
 from datetime import datetime
 
 def append_parsed_data(sh, sheet_name, user_name, ai_results_json, daily_memos_dict, monthly_rule):
-    # 日本時間 (簡易版)
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     try:
@@ -17,7 +16,6 @@ def append_parsed_data(sh, sheet_name, user_name, ai_results_json, daily_memos_d
         rows_to_append = []
         clean_monthly = str(monthly_rule).replace('\n', ' ')
 
-        # --- 重要デバッグ：AIの結果が空でないかチェック ---
         if not ai_results_json:
             print("警告: AIの解析結果が空です。書き込みをスキップします。")
             return False
@@ -27,7 +25,6 @@ def append_parsed_data(sh, sheet_name, user_name, ai_results_json, daily_memos_d
             clean_memo = str(memo).replace('\n', ' ')
             full_original_text = f"[{clean_monthly}] {clean_memo}".strip()
             
-            # 数値変換の安全策
             def to_f(val):
                 try: return float(val) if val is not None else ""
                 except: return ""
@@ -50,5 +47,5 @@ def append_parsed_data(sh, sheet_name, user_name, ai_results_json, daily_memos_d
             return True
         return False
     except Exception as e:
-        print(f"スプレッドシート追記致命的エラー: {e}")
+        print(f"スプレッドシート追記エラー: {e}")
         return False
