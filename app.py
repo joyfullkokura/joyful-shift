@@ -1471,13 +1471,19 @@ if mode == "休み希望入力":
         st.divider()
         st.subheader(f"📅 {user} さんの入力画面")
 
-        initially_selected_days = [d for d, msg in user_memos.items() if str(msg).strip() != ""]
+        # --- 修正ポイント：現在表示中の月(column_names)に存在する日だけを初期選択にする ---
+        initially_selected_days = [
+            d for d, msg in user_memos.items() 
+            if str(msg).strip() != "" and d in column_names
+        ]
+        
+        # st.multiselect の第1引数に「ラベル文字列」を追加し、安全な初期値を設定
         selected_days = st.multiselect(
+            "例外的な要望（時間指定など）を書きたい日を選択してください", # ← ラベル（説明文）を追加
             options=column_names,
             default=initially_selected_days,
             key=f"memo_days_sel_{user}"
         )
-
         with st.form(key=f"master_form_{user}"):
             
             st.write("🌟 **今月全体のスタンス・共通ルール**")
