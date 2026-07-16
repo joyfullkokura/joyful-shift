@@ -1409,18 +1409,43 @@ if mode == "休み希望入力":
             del st.session_state.editing_user
             st.stop()
 
-        # データの準備
+# データの準備
         try:
+            # 1. 休みチェックデータの準備
             raw_user_data = display_df.loc[user].copy()
             user_status_clean = {k: (str(v).upper().strip() in ["TRUE", "1", "1.0", "YES"]) for k, v in raw_user_data.items()}
-            user_memos = memo_df.loc[user].to_dict() if user in memo_df.index else {col: "" for col in column_names}
             
-            RULE_SHEET = f"rules_{year}_{month:02}"
-            if f"monthly_rule_{user}" not in st.session_state:
-                st.session_state[f"monthly_rule_{user}"] = ""
-        except:
-            st.stop()
+            # 2. 要望メモデータの準備
+            user_memos = memo_df.loc[user].to_dict() if user in memo_df.index else {col: "" for col in column_names}
 
+            # 3. ★修正ポイント：月間ルール（rulesシート）を実際に読み込む
+            RULE_SHEET = f"rules_{year}_{month:02}"
+            
+            # まだセッションにデータがない場合のみ、シートを読みに行く
+            if f"monthly_rule_{user}" not in st.session_state:
+                try:
+                    # rulesシートを読み込む（ttl=0で最新を取得）
+                    rule_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=RULE_SHEET, ttl=0)
+                    
+                    if rule_raw is not None and not rule_raw.empty:
+                        # 1列目（名前）をインデックスにする
+                        rule_df_temp = rule_raw.set_index(rule_raw.columns[0])
+                        # 該当ユーザーの「ルール」列の値を取得
+                        if user in rule_df_temp.index:
+                            # インデックスが一致する行の1列目のデータを取得
+                            val = rule_df_temp.loc[user].values[0]
+                            st.session_state[f"monthly_rule_{user}"] = str(val) if pd.notna(val) else ""
+                        else:
+                            st.session_state[f"monthly_rule_{user}"] = ""
+                    else:
+                        st.session_state[f"monthly_rule_{user}"] = ""
+                except Exception:
+                    # シートが存在しない場合は空文字にする
+                    st.session_state[f"monthly_rule_{user}"] = ""
+                
+        except Exception as e:
+            st.error(f"データの読み込み中にエラーが発生しました: {e}")
+            st.stop()
 # ★★★ 重なりを解消する最強のグリッドCSS ★★★
         st.markdown("""
             <style>
@@ -1440,7 +1465,7 @@ if mode == "休み希望入力":
             .stCheckbox {
                 display: flex !important;
                 justify-content: center !important;
-                margin-top: -10px !important; /* 数字との距離を調整 */
+                margin-top: -15px !important; /* 数字との距離を調整 */
             }
             /* 4. チェックボックスの横にある「見えないラベル」を完全に消す */
             .stCheckbox div[data-testid="stMarkdownContainer"] {
