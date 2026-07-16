@@ -1465,7 +1465,7 @@ if mode == "休み希望入力":
             .stCheckbox {
                 display: flex !important;
                 justify-content: center !important;
-                margin-top: -15px !important; /* 数字との距離を調整 */
+                margin-top: -5px !important; /* 数字との距離を調整 */
             }
             /* 4. チェックボックスの横にある「見えないラベル」を完全に消す */
             .stCheckbox div[data-testid="stMarkdownContainer"] {
