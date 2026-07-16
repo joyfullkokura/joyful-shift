@@ -1546,21 +1546,18 @@ if mode == "休み希望入力":
                     def get_col_letter(n): return chr(64 + n) if n <= 26 else "A" + chr(64 + n - 26)
                     range_end = f"{get_col_letter(end_idx)}"
 
-                    # 2. 休み希望(✔)保存
                     ws_req = sh.worksheet(REQ_SHEET)
                     cell_req = ws_req.find(user, in_column=1)
                     if cell_req:
                         row_vals = ["TRUE" if new_updates.get(col, False) else "FALSE" for col in column_names]
                         ws_req.update(f"B{cell_req.row}:{range_end}{cell_req.row}", [row_vals])
 
-                    # 3. 要望メモ保存
                     ws_memo = sh.worksheet(MEMO_SHEET)
                     cell_memo = ws_memo.find(user, in_column=1)
                     if cell_memo:
                         memo_vals = [new_memos_to_save.get(col, "") for col in column_names]
                         ws_memo.update(f"B{cell_memo.row}:{range_end}{cell_memo.row}", [memo_vals])
 
-                    # 4. 月間ルール保存
                     RULE_SHEET = f"rules_{year}_{month:02}"
                     ws_list = [w.title for w in sh.worksheets()]
                     if RULE_SHEET not in ws_list:
@@ -1574,8 +1571,6 @@ if mode == "休み希望入力":
                     else:
                         ws_rule.append_row([user, monthly_rule])
 
-                    # --- 完了処理 ---
-                    # セッション状態を更新
                     st.session_state[state_key].loc[user] = pd.Series(new_updates)
                     st.session_state[memo_state_key].loc[user] = pd.Series(new_memos_to_save)
                     st.session_state[f"monthly_rule_{user}"] = monthly_rule
@@ -3065,9 +3060,71 @@ elif mode == "シフト自動生成（案）":
                 'size': 12,
                 'font_name': 'Meiryo UI'
             })
+# (中略: 合計実働や休憩合計の計算のあと)
+            shortage_fmt = workbook.add_format({
+                'bold': True,
+                'font_color': 'red',
+                'size': 12,
+                'font_name': 'Meiryo UI'
+            })
 
+            # ★★★ ここに以下の「読み込み処理」を追加してください ★★★
+            memo_sheet_name = f"memo_{year}_{month:02}"
+            try:
+                # セッションにあればそれを使う、なければスプレッドシートから直接読み込む
+                memo_df = st.session_state.get(f"memo_data_{year}_{month}", None)
+                if memo_df is None or memo_df.empty:
+                    m_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=memo_sheet_name, ttl=0)
+                    if m_raw is not None and not m_raw.empty:
+                        memo_df = m_raw.drop_duplicates(subset=m_raw.columns[0]).set_index(m_raw.columns[0])
+                    else:
+                        memo_df = pd.DataFrame()
+            except:
+                memo_df = pd.DataFrame() # 万が一失敗しても空の表として扱う
             worksheet.print_area(0, 0, total_row_idx, fulfillment_col)
+# --- 応急処置：日別合計の下にスタッフの要望メモを印字 ---
+            memo_start_row = total_row_idx + 2  # 合計行から2行空けて開始
+            
+            # 要望メモ用の書式
+            fmt_memo_label = workbook.add_format({
+                'bold': True, 'font_color': '#555555', 'size': 10, 'font_name': 'Meiryo UI', 'valign': 'top'
+            })
+            fmt_memo_content = workbook.add_format({
+                'size': 9, 'font_name': 'Meiryo UI', 'valign': 'top', 'text_wrap': True, 'border': 1, 'bg_color': '#F9F9F9'
+            })
 
+            # ★ 修正ポイント：この行の最大高さを記憶する変数
+            max_row_h = 20.0
+
+            # 日付列ごとにループ
+            for c_idx in range(date_start, date_start + num_dates):
+                col_name = column_names[c_idx - date_start]
+                day_memos = []
+                
+                for name in ALL_NAMES:
+                    if not memo_df.empty and name in memo_df.index:
+                        msg = str(memo_df.at[name, col_name]).strip()
+                        if msg and msg not in ["nan", "None", ""]:
+                            day_memos.append(f"【{name}】\n{msg}")
+                
+                if day_memos:
+                    combined_msg = "\n---\n".join(day_memos)
+                    worksheet.write(memo_start_row - 1, c_idx, "スタッフ要望", fmt_memo_label)
+                    worksheet.write(memo_start_row, c_idx, combined_msg, fmt_memo_content)
+                    
+                    # この列で必要な高さを計算
+                    num_lines = combined_msg.count('\n') + 2
+                    needed_h = num_lines * 14.0 # 1行14ピクセル換算
+                    
+                    # 今までの最大値より大きければ更新
+                    if needed_h > max_row_h:
+                        max_row_h = needed_h
+
+            # ループが終わったあと、最後に一番高いサイズに設定する
+            worksheet.set_row(memo_start_row, max_row_h)
+
+            # --- 重要：印刷範囲の再設定 ---
+            worksheet.print_area(0, 0, total_row_idx, fulfillment_col)
             if st.session_state.last_shortage_alerts:
                 memo_col = fulfillment_col + 2
                 worksheet.write(header_row, memo_col, "⚠️ 欠員・調整が必要な箇所（募集・ヘルプ検討）", shortage_fmt)
