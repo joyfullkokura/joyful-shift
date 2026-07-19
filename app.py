@@ -58,8 +58,6 @@ def save_user_request_single_row(user_name, updates_dict, worksheet_name):
         st.error(f"保存エラー: {e}")
         return False
 
-def save_config_data(df, worksheet_name="config"):
-    return save_sheet_robust(df, worksheet_name, target_url=SPREADSHEET_URL)
 def calc_work_and_break_for_pair(val1, val2):
     net1, brk1 = calc_work_and_break(val1)
     net2, brk2 = calc_work_and_break(val2)
@@ -492,6 +490,42 @@ def save_sheet_robust(df, worksheet_name, target_url=None):
         return True
     except Exception as e:
         st.error(f"保存エラー: {e}")
+        return False
+
+def save_config_data(df, worksheet_name, target_url=None):
+    if target_url is None:
+        target_url = SPREADSHEET_URL
+        
+    try:
+        raw_gc = None
+        if hasattr(conn, "_client"): raw_gc = conn._client
+        elif hasattr(conn, "client") and hasattr(conn.client, "_client"): raw_gc = conn.client._client
+        elif hasattr(conn, "client"): raw_gc = conn.client
+            
+        if raw_gc is None or not hasattr(raw_gc, "open_by_url"):
+            st.error("Google Sheetsの接続元が見つかりませんでした。")
+            return False
+
+        sh = raw_gc.open_by_url(target_url)
+        worksheet_list = [w.title for w in sh.worksheets()]
+        
+        if worksheet_name not in worksheet_list:
+            sh.add_worksheet(title=worksheet_name, rows="100", cols="20")
+
+        save_df = df.copy()
+        
+        save_df = save_df.reset_index()
+        
+        if 'index' in save_df.columns:
+            save_df = save_df.drop(columns=['index'])
+
+        save_df = save_df.map(lambda x: "TRUE" if x is True else ("FALSE" if x is False else x))
+        
+        conn.update(spreadsheet=target_url, worksheet=worksheet_name, data=save_df)
+        st.cache_data.clear()
+        return True
+    except Exception as e:
+        st.error(f"設定保存エラー: {e}")
         return False
 
 def save_master(df):
@@ -1295,8 +1329,160 @@ def parse_request_with_gemini(user_memo):
     except Exception as e:
         return {"error": str(e), "start": None, "end": None}
 if mode == "休み希望入力":
-    st.title(f" {year}年{month}月の休み希望入力")
+    # ★★★ 修正ポイント：まず最初にキー（名前）を定義する ★★★
+    state_key = f"req_data_{year}_{month}"
+    memo_state_key = f"memo_data_{year}_{month}"
+    MEMO_SHEET = f"memo_{year}_{month:02}"
+    # ★★★ ここまで ★★★
+
+    col_title, col_export = st.columns([2, 1])
     
+    with col_title:
+        st.title(f"{year}年{month}月の休み希望入力")
+        
+    with col_export:
+        st.write("") 
+        st.write("") 
+        if st.button("📥 休み希望をExcel出力", use_container_width=True):
+            with st.spinner("Excelを作成中..."):
+                # --- 1. データの準備 ---
+                # state_key が上で定義されているので、ここでのエラーが消えます
+                df_req = st.session_state.get(state_key, pd.DataFrame())
+                df_memo = st.session_state.get(memo_state_key, pd.DataFrame())
+                
+                # もしセッションが空の場合、念のためスプレッドシートから最新を読み込む
+                if df_req.empty:
+                    try:
+                        r_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=REQ_SHEET, ttl=0)
+                        if r_raw is not None and not r_raw.empty:
+                            df_req = r_raw.drop_duplicates(subset=r_raw.columns[0]).set_index(r_raw.columns[0])
+                    except: pass
+                
+                if df_memo.empty:
+                    try:
+                        m_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=MEMO_SHEET, ttl=0)
+                        if m_raw is not None and not m_raw.empty:
+                            df_memo = m_raw.drop_duplicates(subset=m_raw.columns[0]).set_index(m_raw.columns[0])
+                    except: pass
+
+                # C. 今月のスタンス
+                rule_sheet_name = f"rules_{year}_{month:02}"
+                # ... (以下、Excel作成のロジックが続く)
+                # C. 今月のスタンス
+                rule_sheet_name = f"rules_{year}_{month:02}"
+                try:
+                    rule_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=rule_sheet_name, ttl=0)
+                    df_rule = rule_raw.set_index(rule_raw.columns[0]) if rule_raw is not None and not rule_raw.empty else pd.DataFrame()
+                except: df_rule = pd.DataFrame()
+
+                # --- 2. Excel作成開始 ---
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    workbook = writer.book
+                    worksheet = workbook.add_worksheet('休み希望一覧')
+                    
+                    # --- ★ここから印刷用設定の追加 ★ ---
+                    # 1. 横向きに設定
+                    worksheet.set_landscape()
+                    
+                    # 2. 用紙サイズをA4に設定 (9はA4の番号)
+                    worksheet.set_paper(9)
+                    
+                    # 3. 横幅と縦幅を「1ページ」に強制的に収める
+                    # (fit_to_pages(横, 縦) : 縦を0にすると、縦長になっても横幅だけ1ページに固定します)
+                    worksheet.fit_to_pages(1, 1) 
+                    
+                    # 4. 余白を狭くする（上下左右を0.3インチ＝約7.5mmに）
+                    worksheet.set_margins(0.3, 0.3, 0.3, 0.3)
+                    
+                    # 5. ページ中央に配置（水平）
+                    worksheet.center_horizontally()
+                    
+                    # 書式設定
+                    fmt_title = workbook.add_format({'bold': True, 'size': 18, 'align': 'center'})
+                    fmt_header = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'font_name': 'Meiryo UI'})
+                    fmt_name = workbook.add_format({
+                        'bold': True, 
+                        'border': 1, 
+                        'align': 'left', 
+                        'valign': 'vcenter', 
+                        'font_name': 'Meiryo UI',
+                        'size': 14,     # ★ ここ！ 11(標準)から14か16くらいに大きくする
+                        'bg_color': '#F2F2F2' # ついでに名前の背景を薄いグレーにするとさらに見やすいです
+                    })
+                    fmt_cell = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'top', 'text_wrap': True, 'size': 9, 'font_name': 'Meiryo UI'})
+                    fmt_off = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'top', 'text_wrap': True, 'size': 10, 'font_color': 'red', 'bold': True, 'bg_color': '#FFEBEE'})
+                    fmt_sat = workbook.add_format({'bold': True, 'bg_color': '#E3F2FD', 'font_color': 'blue', 'border': 1, 'align': 'center'})
+                    fmt_sun = workbook.add_format({'bold': True, 'bg_color': '#FFEBEE', 'font_color': 'red', 'border': 1, 'align': 'center'})
+                    fmt_summary = workbook.add_format({'border': 1, 'bg_color': '#F5F5F5', 'size': 9, 'text_wrap': True, 'valign': 'vcenter'})
+
+                    # タイトル
+                    worksheet.merge_range(0, 0, 0, len(column_names) + 3, f"【{year}年{month}月】 休み希望・要望 一覧表", fmt_title)
+                    
+                    # ヘッダー (名前, 日付..., スタンス, 休み合計)
+                    headers = ["名前"] + column_names + ["今月のスタンス", "休み希望数"]
+                    for c_idx, h in enumerate(headers):
+                        if "(" in h: # 日付列
+                            d = int("".join(filter(str.isdigit, h.split('(')[0])))
+                            w_idx = calendar.weekday(year, month, d)
+                            if w_idx == 5: style = fmt_sat
+                            elif w_idx == 6: style = fmt_sun
+                            else: style = fmt_header
+                        else:
+                            style = fmt_header
+                        worksheet.write(2, c_idx, h, style)
+
+                    # データ行の書き込み
+                    for r_idx, name in enumerate(ALL_NAMES):
+                        row = 3 + r_idx
+                        worksheet.set_row(row, 55) # 行の高さを少し広げる
+                        
+                        # 1. 名前
+                        worksheet.write(row, 0, name, fmt_name)
+                        
+                        off_count = 0
+                        # 2. 各日付のデータ
+                        for c_idx, col in enumerate(column_names):
+                            is_off = df_req.at[name, col] if name in df_req.index else False
+                            memo = str(df_memo.at[name, col]).strip() if name in df_memo.index else ""
+                            if memo in ["nan", "None"]: memo = ""
+                            
+                            display_text = ""
+                            style = fmt_cell
+                            if is_off:
+                                display_text = "✖"
+                                off_count += 1
+                                style = fmt_off
+                            
+                            if memo:
+                                display_text += f"\n{memo}" if display_text else memo
+                            
+                            worksheet.write(row, c_idx + 1, display_text, style)
+                        
+                        # 3. スタンス（共通ルール）
+                        user_rule = ""
+                        if not df_rule.empty and name in df_rule.index:
+                            rule_val = df_rule.loc[name].values[0]
+                            user_rule = str(rule_val) if pd.notna(rule_val) else ""
+                        worksheet.write(row, len(column_names) + 1, user_rule, fmt_summary)
+                        
+                        # 4. 休み希望合計
+                        worksheet.write(row, len(column_names) + 2, f"{off_count}日", fmt_cell)
+
+                    # 列幅の調整
+                    worksheet.set_column(0, 0, 15) # 名前
+                    worksheet.set_column(1, len(column_names), 10) # 日付
+                    worksheet.set_column(len(column_names) + 1, len(column_names) + 1, 35) # スタンス
+                    worksheet.set_column(len(column_names) + 2, len(column_names) + 2, 10) # 合計
+
+                # ダウンロードボタン
+                st.download_button(
+                    label="💾 Excelファイルをダウンロード",
+                    data=output.getvalue(),
+                    file_name=f"Requests_{year}_{month:02}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
     state_key = f"req_data_{year}_{month}"
     memo_state_key = f"memo_data_{year}_{month}" 
     MEMO_SHEET = f"memo_{year}_{month:02}"     
@@ -1928,7 +2114,7 @@ elif mode == "シフト自動生成（案）":
 
         st.markdown("---")
         if st.button("💾 デフォルトとして保存", use_container_width=True, type="primary"):
-            save_sheet_robust(pd.DataFrame(all_settings_to_save).set_index("key"), "config_times")
+            save_config_data(pd.DataFrame(all_settings_to_save).set_index("key"), "config_times")
             sp_save_data = []
             for d, c in special_configs.items():
                 sp_save_data.append({"year": year, "month": month, "day": d, **c})
@@ -2954,7 +3140,22 @@ elif mode == "シフト自動生成（案）":
                     f'+RIGHT(LEFT({ref},FIND("-",{ref})-1),2)/60)'
                     f',0)'
                 )
+            rule_sheet_name = f"rules_{year}_{month:02}"
+            try:
+                rule_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=rule_sheet_name, ttl=0)
+                if rule_raw is not None and not rule_raw.empty:
+                    rule_df = rule_raw.set_index(rule_raw.columns[0])
+                else:
+                    rule_df = pd.DataFrame()
+            except:
+                rule_df = pd.DataFrame()
 
+            rule_col = fulfillment_col + 1
+            worksheet.set_column(rule_col, rule_col, 40) 
+            fmt_rule_content = workbook.add_format({
+                'size': 9, 'font_name': 'Meiryo UI', 'valign': 'vcenter', 'text_wrap': True, 'border': 1, 'bg_color': '#F2F2F2'
+            })
+            worksheet.write(header_row, rule_col, "今月のスタンス・共通ルール", fmt_header)
             for i in range(0, len(export_df), 4):   
                 base_row = header_row + 1 + i
                 if i + 3 >= len(export_df):
@@ -2970,7 +3171,16 @@ elif mode == "シフト自動生成（案）":
 
                 worksheet.merge_range(base_row, 0, base_row + 3, 0, group, fmt_merge)
                 worksheet.merge_range(base_row, 1, base_row + 3, 1, name, fmt_merge)
-
+                user_rule = ""
+                if not rule_df.empty and name in rule_df.index:
+                    try:
+                        rule_val = rule_df.loc[name].values[0]
+                        user_rule = str(rule_val) if pd.notna(rule_val) else ""
+                    except:
+                        user_rule = ""
+                
+                worksheet.merge_range(base_row, rule_col, base_row + 3, rule_col, 
+                                      user_rule if user_rule != "nan" else "", fmt_rule_content)
                 worksheet.set_row(base_row, 23)      
                 worksheet.set_row(base_row + 1, 23)  
                 worksheet.set_row(base_row + 2, 12)  
@@ -3066,7 +3276,6 @@ elif mode == "シフト自動生成（案）":
                 'size': 12,
                 'font_name': 'Meiryo UI'
             })
-# (中略: 合計実働や休憩合計の計算のあと)
             shortage_fmt = workbook.add_format({
                 'bold': True,
                 'font_color': 'red',
@@ -3074,10 +3283,8 @@ elif mode == "シフト自動生成（案）":
                 'font_name': 'Meiryo UI'
             })
 
-            # ★★★ ここに以下の「読み込み処理」を追加してください ★★★
             memo_sheet_name = f"memo_{year}_{month:02}"
             try:
-                # セッションにあればそれを使う、なければスプレッドシートから直接読み込む
                 memo_df = st.session_state.get(f"memo_data_{year}_{month}", None)
                 if memo_df is None or memo_df.empty:
                     m_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=memo_sheet_name, ttl=0)
@@ -3086,12 +3293,10 @@ elif mode == "シフト自動生成（案）":
                     else:
                         memo_df = pd.DataFrame()
             except:
-                memo_df = pd.DataFrame() # 万が一失敗しても空の表として扱う
+                memo_df = pd.DataFrame() 
             worksheet.print_area(0, 0, total_row_idx, fulfillment_col)
-# --- 応急処置：日別合計の下にスタッフの要望メモを印字 ---
-            memo_start_row = total_row_idx + 2  # 合計行から2行空けて開始
+            memo_start_row = total_row_idx + 2  
             
-            # 要望メモ用の書式
             fmt_memo_label = workbook.add_format({
                 'bold': True, 'font_color': '#555555', 'size': 10, 'font_name': 'Meiryo UI', 'valign': 'top'
             })
@@ -3099,10 +3304,8 @@ elif mode == "シフト自動生成（案）":
                 'size': 9, 'font_name': 'Meiryo UI', 'valign': 'top', 'text_wrap': True, 'border': 1, 'bg_color': '#F9F9F9'
             })
 
-            # ★ 修正ポイント：この行の最大高さを記憶する変数
             max_row_h = 20.0
 
-            # 日付列ごとにループ
             for c_idx in range(date_start, date_start + num_dates):
                 col_name = column_names[c_idx - date_start]
                 day_memos = []
@@ -3118,18 +3321,14 @@ elif mode == "シフト自動生成（案）":
                     worksheet.write(memo_start_row - 1, c_idx, "スタッフ要望", fmt_memo_label)
                     worksheet.write(memo_start_row, c_idx, combined_msg, fmt_memo_content)
                     
-                    # この列で必要な高さを計算
                     num_lines = combined_msg.count('\n') + 2
-                    needed_h = num_lines * 14.0 # 1行14ピクセル換算
+                    needed_h = num_lines * 14.0 
                     
-                    # 今までの最大値より大きければ更新
                     if needed_h > max_row_h:
                         max_row_h = needed_h
 
-            # ループが終わったあと、最後に一番高いサイズに設定する
             worksheet.set_row(memo_start_row, max_row_h)
 
-            # --- 重要：印刷範囲の再設定 ---
             worksheet.print_area(0, 0, total_row_idx, fulfillment_col)
             if st.session_state.last_shortage_alerts:
                 memo_col = fulfillment_col + 2
