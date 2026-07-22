@@ -147,19 +147,23 @@ def display_month_events(year, month):
     return all_events
 @st.cache_data(ttl=600)
 def get_all_stores_cached():
-    master_conn = st.connection("gsheets", type=GSheetsConnection)
-    raw_url = MASTER_DATABASE_URL
-    if "/d/" in raw_url:
-        sheet_id = raw_url.split("/d/")[1].split("/")[0]
-        clean_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit"
-    else:
-        clean_url = raw_url
+    try:
+        raw_url = MASTER_DATABASE_URL
+        if "/d/" in raw_url:
+            sheet_id = raw_url.split("/d/")[1].split("/")[0]
+        else:
+            sheet_id = raw_url
         
-    df = master_conn.read(spreadsheet=clean_url, worksheet="stores", ttl=0)
-    df = df.dropna(how='all') 
-    df = df[df['store_id'].notna()] 
-    df.columns = df.columns.str.strip()
-    return df
+        # 400エラーを防ぐ最強の策：PandasでGoogleのCSVエクスポートエンドポイントを直接1本釣り
+        clean_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=stores"
+        df = pd.read_csv(clean_url)
+        df = df.dropna(how='all') 
+        df = df[df['store_id'].notna()] 
+        df.columns = df.columns.str.strip()
+        return df
+    except Exception as e:
+        st.error(f"店舗データ読込エラー: {e}")
+        return pd.DataFrame()
 def get_split_shift(slot_time_str, store_info):
     if not slot_time_str or "-" not in slot_time_str:
         return slot_time_str, ""
@@ -302,8 +306,7 @@ def load_sheet_no_cache(worksheet_name, default_df):
         # 1. Renderの設定（環境変数）からURLを取得
         raw_url = os.environ.get("MASTER_DATABASE_URL")
         if not raw_url:
-            # 環境変数がなければ、プログラム内のデフォルトを使う
-            raw_url = "https://docs.google.com/spreadsheets/d/1cajpaXBr6N8ecMGTR0L9-5AJ65yuRNSpdhheU6QR44U"
+            raw_url = "https://docs.google.com/spreadsheets/d/1e10-yBgz6nCt-cHMYiY6H544qu38-GD-CyBwCWrSPfM/edit"
 
         # 2. URLを掃除して「ID」だけを抜き出す
         if "/d/" in raw_url:
@@ -311,15 +314,14 @@ def load_sheet_no_cache(worksheet_name, default_df):
         else:
             sheet_id = raw_url
 
-        # 3. IDをクリーンな完全URLの形式に再構築して読み込む（404エラー＆400エラー両方に対策）
-        clean_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit"
-        df = conn.read(spreadsheet=clean_url, worksheet=worksheet_name, ttl=0)
+        # コネクションの不具合を完全にバイパスして直接読み込みます
+        clean_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={worksheet_name}"
+        df = pd.read_csv(clean_url)
         
         if df is not None and not df.empty:
             return df
         return default_df
     except Exception as e:
-        # 画面にエラー内容を表示
         st.error(f"❌ 接続エラー (スプレッドシート読込失敗): {e}")
         return default_df
 def get_sundays(year, month):
@@ -489,7 +491,16 @@ def load_master():
     })
     
     try:
-        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="staff_master", ttl=0)
+        raw_url = SPREADSHEET_URL
+        if "/d/" in raw_url:
+            sheet_id = raw_url.split("/d/")[1].split("/")[0]
+        else:
+            sheet_id = raw_url
+            
+        # 店舗個別シートから直接1本釣りします
+        clean_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=staff_master"
+        df = pd.read_csv(clean_url)
+        
         df['レジ締め'] = df['レジ締め'].astype(bool)
         df['デザート'] = df['デザート'].astype(bool)
         if df is not None and not df.empty:
