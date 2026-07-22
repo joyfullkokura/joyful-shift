@@ -466,11 +466,13 @@ if 'spreadsheet_url' in st.session_state:
     try:
         if "/d/" in SPREADSHEET_URL_TEMP:
             temp_id = SPREADSHEET_URL_TEMP.split("/d/")[1].split("/")[0]
-            clean_individual_url = f"https://docs.google.com/spreadsheets/d/{temp_id}/edit"
         else:
-            clean_individual_url = SPREADSHEET_URL_TEMP
+            temp_id = SPREADSHEET_URL_TEMP
             
-        individual_master = conn.read(spreadsheet=clean_individual_url, worksheet="staff_master", ttl=0)
+        # コネクションをバイパスし、個別店舗の従業員データをPandasで直接ロード
+        clean_individual_url = f"https://docs.google.com/spreadsheets/d/{temp_id}/gviz/tq?tqx=out:csv&sheet=staff_master"
+        individual_master = pd.read_csv(clean_individual_url)
+        
         if individual_master is not None and not individual_master.empty:
             master_df = individual_master.copy()
             # 「名前」列をキーにして、前後の不要な空白を削除
@@ -611,7 +613,15 @@ def save_master(df):
     return False
 def load_confirmed_shift(sheet_name):
     try:
-        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, ttl=0)
+        raw_url = SPREADSHEET_URL
+        if "/d/" in raw_url:
+            sheet_id = raw_url.split("/d/")[1].split("/")[0]
+        else:
+            sheet_id = raw_url
+            
+        # 確定シフトもPandasで直接ロード
+        clean_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
+        df = pd.read_csv(clean_url)
         if df is not None and not df.empty:
             df = df.set_index(df.columns[0])
             return df
