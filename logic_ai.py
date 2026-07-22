@@ -3,10 +3,11 @@ from google.genai import types
 import json
 import re
 import time
+import os
 
 def parse_requests_bundled(monthly_rule, daily_memos_dict, column_names):
-    API_KEY = "AQ.Ab8RN6LR4nlYqvyja5XjmFSDWG7cuN903p43SH71RmXIJgLdSQ"
-    client = genai.Client(api_key=API_KEY)
+    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+    client = genai.Client(api_key=GEMINI_API_KEY)
 
     daily_info = "\n".join([f"{d}: {msg}" for d, msg in daily_memos_dict.items() if str(msg).strip() != ""])
     days_list = ", ".join(column_names)

@@ -292,16 +292,13 @@ def send_line_notification(message):
         return False
 def load_sheet_no_cache(worksheet_name, default_df):
     try:
-        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=worksheet_name, ttl=0)
+        target_url = os.environ.get("MASTER_DATABASE_URL")
+        df = conn.read(spreadsheet=target_url, worksheet=worksheet_name, ttl=0)
         if df is not None and not df.empty:
-            df = df.dropna(how='all', axis=0)
-            first_col = df.columns[0]
-            df = df.drop_duplicates(subset=first_col, keep='first')
-            df = df.set_index(first_col)
-            df.index = df.index.astype(str).str.strip()
             return df
         return default_df
-    except Exception:
+    except Exception as e:
+        st.error(f"詳細エラー: {e}") # ここで400エラーの中身を確認
         return default_df
 def get_sundays(year, month):
     sundays = []
