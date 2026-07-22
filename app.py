@@ -271,8 +271,8 @@ def export_cleaning_handwriting_sheet(year, period_label):
 def get_japan_today():
     return datetime.now(JST).date()
 def send_line_notification(message):
-    LINE_ACCESS_TOKEN = "CWtJrVJ9DydSnL/meqMN5K8+9gV3j3zLWjlTFHuHbj9K7wNPgZah76+RzB77c/1ASW+IReRwpVetUSavMIitb85I7pmCp7hfJpY7931zzr6INTNzdFPBVXgnMehg5j+LN9bxO6aY1AIXM/k5cAwr0QdB04t89/1O/w1cDnyilFU="
-    LINE_DESTINATION_ID = "U627c8971cff4e882b7f8673addc08ffa"
+    LINE_ACCESS_TOKEN = st.secrets.get("LINE_ACCESS_TOKEN", "")
+    LINE_DESTINATION_ID = st.secrets.get("LINE_DESTINATION_ID", "")
     
     url = "https://api.line.me/v2/bot/message/push"
     headers = {
@@ -419,7 +419,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 TIME_OPTIONS = [f"{h:02d}:{m:02d}" for h in range(0, 31) for m in [0, 30]]# 24:30以降は不要なので24:00までにする
 TIME_OPTIONS = TIME_OPTIONS[:-1]
-MASTER_DATABASE_URL = "https://docs.google.com/spreadsheets/d/1cajpaXBr6N8ecMGTR0L9-5AJ65yuRNSpdhheU6QR44U/edit?gid=0#gid=0"
+MASTER_DATABASE_URL = st.secrets.get("MASTER_DATABASE_URL", "https://docs.google.com/spreadsheets/d/1cajpaXBr6N8ecMGTR0L9-5AJ65yuRNSpdhheU6QR44U/edit?gid=0#gid=0")
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 if 'view_date' not in st.session_state:
