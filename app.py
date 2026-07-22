@@ -1930,6 +1930,12 @@ elif mode == "シフト自動生成（案）":
     holidays = get_month_holidays_list(year, month)
 
     stored_df = load_sheet_no_cache("config_times", pd.DataFrame())
+    if not stored_df.empty:
+        if "key" in stored_df.columns:
+            stored_df = stored_df.set_index("key")
+        elif "Unnamed: 0" in stored_df.columns:
+            stored_df = stored_df.rename(columns={"Unnamed: 0": "key"}).set_index("key")
+            
     stored_times = stored_df.to_dict('index') if not stored_df.empty else {}
     
     transfer_baito_default = str(stored_times.get("transfer_baito_to_staff", {}).get("start", "True")).strip().lower() == "true"
