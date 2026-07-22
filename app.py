@@ -371,31 +371,49 @@ def calc_work_and_break_combined(val1, val2):
     
     return final_net1, break1, final_net2, break2
 st.set_page_config(page_title="ジョイフル シフト管理", layout="wide", page_icon="🏪")
-
+# --- 右上のメニュー、GitHubアイコン、デプロイボタン、右下のロゴを完全に抹消する最強CSS ---
 st.markdown("""
     <style>
-    [data-testid="stHeader"] {
+    /* 1. ヘッダー（右上のメニュー、デプロイボタン、GitHubリンク）を完全に消す */
+    [data-testid="stHeader"], header {
+        display: none !important;
+    }
+
+    /* 2. デプロイボタンを個別に指定して消す */
+    .stAppDeployButton, .stDeployButton {
+        display: none !important;
+    }
+
+    /* 3. 右下の「Made with Streamlit」ロゴバッジを消す */
+    footer {
+        display: none !important;
+    }
+    #stDecoration, [data-testid="stDecoration"] {
         display: none !important;
     }
     
-    .stAppDeployButton {
+    /* 4. 最新版で追加された右下の「Viewer Badge」を消す */
+    .viewerBadge_container__1QSob, .viewerBadge_link__39v9l {
         display: none !important;
     }
-    
+    /* クラス名が変わっても消えるようにワイルドカードで指定 */
+    div[class^="viewerBadge"] {
+        display: none !important;
+    }
+
+    /* 5. 右上の三本線メニュー自体を消す */
     #MainMenu {
         visibility: hidden !important;
     }
-    
-    footer {
-        visibility: hidden !important;
-    }
 
+    /* 6. 余白を詰める（ヘッダーが消えた分、上を詰める） */
+    .stApp {
+        margin-top: -80px;
+    }
+    
+    /* 7. ツールバーを消す */
     [data-testid="stToolbar"] {
         display: none !important;
-    }
-
-    .stApp {
-        margin-top: -60px;
     }
     </style>
     """, unsafe_allow_html=True)
