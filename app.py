@@ -1137,7 +1137,12 @@ mode = next(m["name"] for m in available_modes if m["label"] == selected_label)
 pw = st.sidebar.text_input("管理者パスワード", type="password")
 
 try:
-    raw_config_df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="config", ttl=0)
+    if "/d/" in SPREADSHEET_URL:
+        sheet_id = SPREADSHEET_URL.split("/d/")[1].split("/")[0]
+    else:
+        sheet_id = SPREADSHEET_URL
+    clean_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=config"
+    raw_config_df = pd.read_csv(clean_url)
     
     if raw_config_df is not None:
         if not raw_config_df.empty:
@@ -1150,7 +1155,7 @@ try:
                 current_notice = "お知らせはありません"
     else:
         current_notice = "お知らせはありません"
-except:
+except Exception as e:
     current_notice = "お知らせはありません"
 
 st.info(f" 📢 お知らせ： {current_notice}")
@@ -1449,7 +1454,6 @@ if mode == "休み希望入力":
                             df_memo = m_raw.drop_duplicates(subset=m_raw.columns[0]).set_index(m_raw.columns[0])
                     except: pass
 
-                # C. 今月のスタンス
                 rule_sheet_name = f"rules_{year}_{month:02}"
                 # ... (以下、Excel作成のロジックが続く)
                 # C. 今月のスタンス
@@ -1572,18 +1576,35 @@ if mode == "休み希望入力":
     MEMO_SHEET = f"memo_{year}_{month:02}"     
     if state_key not in st.session_state:
         with st.spinner("最新データを読み込み中..."):
+            if "/d/" in SPREADSHEET_URL:
+                sheet_id = SPREADSHEET_URL.split("/d/")[1].split("/")[0]
+            else:
+                sheet_id = SPREADSHEET_URL
+                
             try:
-                r_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=REQ_SHEET, ttl=0)
+                r_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={REQ_SHEET}"
+                r_raw = pd.read_csv(r_url)
                 if r_raw is None or r_raw.empty:
                     df = pd.DataFrame(False, index=ALL_NAMES, columns=column_names)
                 else:
                     df = r_raw.drop_duplicates(subset=r_raw.columns[0]).set_index(r_raw.columns[0])
                     df = df.reindex(index=ALL_NAMES, columns=column_names).fillna(False)
                     df = df.map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0", "YES"])
-            except:
+            except Exception as e:
                 df = pd.DataFrame(False, index=ALL_NAMES, columns=column_names)
             st.session_state[state_key] = df
 
+            try:
+                m_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={MEMO_SHEET}"
+                m_raw = pd.read_csv(m_url)
+                if m_raw is None or m_raw.empty:
+                    m_df = pd.DataFrame("", index=ALL_NAMES, columns=column_names)
+                else:
+                    m_df = m_raw.drop_duplicates(subset=m_raw.columns[0]).set_index(m_raw.columns[0])
+                    m_df = m_df.reindex(index=ALL_NAMES, columns=column_names).fillna("")
+            except:
+                m_df = pd.DataFrame("", index=ALL_NAMES, columns=column_names)
+            st.session_state[memo_state_key] = m_df
             try:
                 m_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=MEMO_SHEET, ttl=0)
                 if m_raw is None or m_raw.empty:
@@ -1683,8 +1704,13 @@ if mode == "休み希望入力":
             RULE_SHEET = f"rules_{year}_{month:02}"
             
             if f"monthly_rule_{user}" not in st.session_state:
+                if "/d/" in SPREADSHEET_URL:
+                    sheet_id = SPREADSHEET_URL.split("/d/")[1].split("/")[0]
+                else:
+                    sheet_id = SPREADSHEET_URL
                 try:
-                    rule_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=RULE_SHEET, ttl=0)
+                    rule_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={RULE_SHEET}"
+                    rule_raw = pd.read_csv(rule_url)
                     
                     if rule_raw is not None and not rule_raw.empty:
                         rule_df_temp = rule_raw.set_index(rule_raw.columns[0])
@@ -1741,13 +1767,11 @@ if mode == "休み希望入力":
         st.divider()
         st.subheader(f"📅 {user} さんの入力画面")
 
-        # --- 修正ポイント：現在表示中の月(column_names)に存在する日だけを初期選択にする ---
         initially_selected_days = [
             d for d, msg in user_memos.items() 
             if str(msg).strip() != "" and d in column_names
         ]
         
-        # st.multiselect の第1引数に「ラベル文字列」を追加し、安全な初期値を設定
         selected_days = st.multiselect(
             "例外的な要望（時間指定など）を書きたい日を選択してください", # ← ラベル（説明文）を追加
             options=column_names,
