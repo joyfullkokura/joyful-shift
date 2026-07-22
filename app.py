@@ -370,24 +370,32 @@ def calc_work_and_break_combined(val1, val2):
     final_net2 = round(work2 - break2, 1)
     
     return final_net1, break1, final_net2, break2
-st.set_page_config(page_title="ジョイフル シフト管理", layout="wide",page_icon="🏪")
-st.markdown('<link rel="apple-touch-icon" href="https://em-content.zobj.net/source/microsoft-teams/363/convenience-store_1f3ea.png">', unsafe_allow_html=True)
+st.set_page_config(page_title="ジョイフル シフト管理", layout="wide", page_icon="🏪")
+
 st.markdown("""
     <style>
     [data-testid="stHeader"] {
         display: none !important;
     }
+    
     .stAppDeployButton {
         display: none !important;
     }
+    
     #MainMenu {
-        display: none !important;
+        visibility: hidden !important;
     }
+    
     footer {
+        visibility: hidden !important;
+    }
+
+    [data-testid="stToolbar"] {
         display: none !important;
     }
+
     .stApp {
-        margin-top: -50px;
+        margin-top: -60px;
     }
     </style>
     """, unsafe_allow_html=True)
