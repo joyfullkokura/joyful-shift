@@ -302,6 +302,7 @@ def load_sheet_no_cache(worksheet_name, default_df):
         # 1. Renderの設定（環境変数）からURLを取得
         raw_url = os.environ.get("MASTER_DATABASE_URL")
         if not raw_url:
+            # 環境変数がなければ、プログラム内のデフォルトを使う
             raw_url = "https://docs.google.com/spreadsheets/d/1cajpaXBr6N8ecMGTR0L9-5AJ65yuRNSpdhheU6QR44U"
 
         # 2. URLを掃除して「ID」だけを抜き出す
@@ -311,7 +312,7 @@ def load_sheet_no_cache(worksheet_name, default_df):
             sheet_id = raw_url
 
         # 3. IDをクリーンな完全URLの形式に再構築して読み込む（404エラー＆400エラー両方に対策）
-        clean_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit"  # ← /edit のみに修正
+        clean_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit"
         df = conn.read(spreadsheet=clean_url, worksheet=worksheet_name, ttl=0)
         
         if df is not None and not df.empty:
