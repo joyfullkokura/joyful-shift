@@ -148,7 +148,15 @@ def display_month_events(year, month):
 @st.cache_data(ttl=600)
 def get_all_stores_cached():
     master_conn = st.connection("gsheets", type=GSheetsConnection)
-    df = master_conn.read(spreadsheet=MASTER_DATABASE_URL, worksheet="stores", ttl=0)
+    raw_url = MASTER_DATABASE_URL
+    # URLをクリーンにして、パブリックシートとして確実に読み込める形式にします
+    if "/d/" in raw_url:
+        sheet_id = raw_url.split("/d/")[1].split("/")[0]
+        clean_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}"
+    else:
+        clean_url = raw_url
+        
+    df = master_conn.read(spreadsheet=clean_url, worksheet="stores", ttl=0)
     df = df.dropna(how='all') 
     df = df[df['store_id'].notna()] 
     df.columns = df.columns.str.strip()
@@ -447,12 +455,30 @@ WEEKDAYS_JP = ["月", "火", "水", "木", "金", "土", "日"]
 column_names = [f"{d}({WEEKDAYS_JP[calendar.weekday(year, month, d)]})" for d in range(1, num_days + 1)]
 REQ_SHEET = f"req_{year}_{month:02}"
 
-master_df = load_sheet_no_cache("staff_master", pd.DataFrame())
-if not master_df.empty:
-    master_df['表示名'] = master_df['職種'].astype(str).str.strip() + " " + master_df.index.astype(str).str.strip()
-    ALL_NAMES = master_df['表示名'].tolist()
-else:
-    ALL_NAMES = []
+# 店舗選択前は、従業員リストを一度空にしてエラーを回避します
+master_df = pd.DataFrame()
+ALL_NAMES = []
+
+# すでに店舗にログインしている（session_state にURLがある）場合のみ、個別店舗シートからロードします
+if 'spreadsheet_url' in st.session_state:
+    SPREADSHEET_URL_TEMP = st.session_state.spreadsheet_url
+    try:
+        # 店舗個別URLの安全なクレンジング
+        if "/d/" in SPREADSHEET_URL_TEMP:
+            temp_id = SPREADSHEET_URL_TEMP.split("/d/")[1].split("/")[0]
+            clean_individual_url = f"https://docs.google.com/spreadsheets/d/{temp_id}"
+        else:
+            clean_individual_url = SPREADSHEET_URL_TEMP
+            
+        individual_master = conn.read(spreadsheet=clean_individual_url, worksheet="staff_master", ttl=0)
+        if individual_master is not None and not individual_master.empty:
+            master_df = individual_master.copy()
+            # 「名前」列をキーにして、前後の不要な空白を削除
+            master_df['名前'] = master_df['名前'].astype(str).str.strip()
+            ALL_NAMES = master_df['名前'].tolist()
+    except Exception as e:
+        # 画面に不要なエラーを出し続けないよう、デバッグログとして st.caption で小さく表示します
+        st.caption(f"ℹ️ 店舗個別データ準備中... ({e})")
 
 def load_master():
     empty_df = pd.DataFrame({
