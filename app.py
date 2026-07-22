@@ -151,7 +151,7 @@ def get_all_stores_cached():
     raw_url = MASTER_DATABASE_URL
     if "/d/" in raw_url:
         sheet_id = raw_url.split("/d/")[1].split("/")[0]
-        clean_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit?usp=sharing"
+        clean_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit"
     else:
         clean_url = raw_url
         
@@ -302,7 +302,6 @@ def load_sheet_no_cache(worksheet_name, default_df):
         # 1. Renderの設定（環境変数）からURLを取得
         raw_url = os.environ.get("MASTER_DATABASE_URL")
         if not raw_url:
-            # 環境変数がなければ、プログラム内のデフォルトを使う
             raw_url = "https://docs.google.com/spreadsheets/d/1cajpaXBr6N8ecMGTR0L9-5AJ65yuRNSpdhheU6QR44U"
 
         # 2. URLを掃除して「ID」だけを抜き出す
@@ -311,8 +310,8 @@ def load_sheet_no_cache(worksheet_name, default_df):
         else:
             sheet_id = raw_url
 
-        # 3. IDをクリーンな完全URLの形式に再構築して読み込む（404エラー＆400エラーの両方に対策）
-        clean_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}"
+        # 3. IDをクリーンな完全URLの形式に再構築して読み込む（404エラー＆400エラー両方に対策）
+        clean_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit"  # ← /edit のみに修正
         df = conn.read(spreadsheet=clean_url, worksheet=worksheet_name, ttl=0)
         
         if df is not None and not df.empty:
@@ -464,7 +463,7 @@ if 'spreadsheet_url' in st.session_state:
     try:
         if "/d/" in SPREADSHEET_URL_TEMP:
             temp_id = SPREADSHEET_URL_TEMP.split("/d/")[1].split("/")[0]
-            clean_individual_url = f"https://docs.google.com/spreadsheets/d/{temp_id}/edit?usp=sharing"
+            clean_individual_url = f"https://docs.google.com/spreadsheets/d/{temp_id}/edit"
         else:
             clean_individual_url = SPREADSHEET_URL_TEMP
             
