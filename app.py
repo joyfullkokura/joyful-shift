@@ -3262,7 +3262,13 @@ elif mode == "シフト自動生成（案）":
                 )
             rule_sheet_name = f"rules_{year}_{month:02}"
             try:
-                rule_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=rule_sheet_name, ttl=0)
+                raw_url = SPREADSHEET_URL
+                if "/d/" in raw_url:
+                    sheet_id = raw_url.split("/d/")[1].split("/")[0]
+                else:
+                    sheet_id = raw_url
+                clean_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={rule_sheet_name}"
+                rule_raw = pd.read_csv(clean_url)
                 if rule_raw is not None and not rule_raw.empty:
                     rule_df = rule_raw.set_index(rule_raw.columns[0])
                 else:
@@ -3371,7 +3377,7 @@ elif mode == "シフト自動生成（案）":
 
             total_row_idx = header_row + 1 + len(export_df)
             worksheet.set_row(total_row_idx, 25)
-
+            
             worksheet.merge_range(total_row_idx, 0, total_row_idx, 1, "日別合計人時", fmt_total_combined)
 
             first_data_row = header_row + 2
@@ -3407,7 +3413,13 @@ elif mode == "シフト自動生成（案）":
             try:
                 memo_df = st.session_state.get(f"memo_data_{year}_{month}", None)
                 if memo_df is None or memo_df.empty:
-                    m_raw = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=memo_sheet_name, ttl=0)
+                    raw_url = SPREADSHEET_URL
+                    if "/d/" in raw_url:
+                        sheet_id = raw_url.split("/d/")[1].split("/")[0]
+                    else:
+                        sheet_id = raw_url
+                    clean_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={memo_sheet_name}"
+                    m_raw = pd.read_csv(clean_url)
                     if m_raw is not None and not m_raw.empty:
                         memo_df = m_raw.drop_duplicates(subset=m_raw.columns[0]).set_index(m_raw.columns[0])
                     else:
@@ -3459,7 +3471,13 @@ elif mode == "シフト自動生成（案）":
             worksheet.freeze_panes(header_row + 1, 2)
 
             try:
-                conf_df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="config_times", ttl=0)
+                raw_url = SPREADSHEET_URL
+                if "/d/" in raw_url:
+                    sheet_id = raw_url.split("/d/")[1].split("/")[0]
+                else:
+                    sheet_id = raw_url
+                clean_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=config_times"
+                conf_df = pd.read_csv(clean_url)
                 
                 valid_shifts = []
                 if conf_df is not None and not conf_df.empty:
