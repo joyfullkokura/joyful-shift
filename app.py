@@ -517,7 +517,14 @@ def load_master():
 @st.cache_data(ttl=600)
 def load_sheet_cached(worksheet_name):
     try:
-        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=worksheet_name, ttl=0)
+        raw_url = SPREADSHEET_URL
+        if "/d/" in raw_url:
+            sheet_id = raw_url.split("/d/")[1].split("/")[0]
+        else:
+            sheet_id = raw_url
+            
+        clean_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={worksheet_name}"
+        df = pd.read_csv(clean_url)
         if df is not None:
             return df
         return None 
@@ -2646,7 +2653,7 @@ elif mode == "シフト自動生成（案）":
                 return 9999
 
             target_idx = column_names.index(target_col)
-
+            
             if other_filled:
                 cost -= 100
 
@@ -2824,7 +2831,6 @@ elif mode == "シフト自動生成（案）":
                     continue
 
             best_overall_df.at[baito_name, col] = ""
-            # slot_memory 更新
             sdata["assigned_to"] = w_name
 
             v1 = str(best_overall_df.at[w_name, col]).strip() if w_name in best_overall_df.index else ""
