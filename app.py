@@ -149,10 +149,9 @@ def display_month_events(year, month):
 def get_all_stores_cached():
     master_conn = st.connection("gsheets", type=GSheetsConnection)
     raw_url = MASTER_DATABASE_URL
-    # URLをクリーンにして、パブリックシートとして確実に読み込める形式にします
     if "/d/" in raw_url:
         sheet_id = raw_url.split("/d/")[1].split("/")[0]
-        clean_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}"
+        clean_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit?usp=sharing"
     else:
         clean_url = raw_url
         
@@ -463,10 +462,9 @@ ALL_NAMES = []
 if 'spreadsheet_url' in st.session_state:
     SPREADSHEET_URL_TEMP = st.session_state.spreadsheet_url
     try:
-        # 店舗個別URLの安全なクレンジング
         if "/d/" in SPREADSHEET_URL_TEMP:
             temp_id = SPREADSHEET_URL_TEMP.split("/d/")[1].split("/")[0]
-            clean_individual_url = f"https://docs.google.com/spreadsheets/d/{temp_id}"
+            clean_individual_url = f"https://docs.google.com/spreadsheets/d/{temp_id}/edit?usp=sharing"
         else:
             clean_individual_url = SPREADSHEET_URL_TEMP
             
