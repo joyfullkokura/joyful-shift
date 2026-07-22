@@ -1930,11 +1930,8 @@ elif mode == "シフト自動生成（案）":
     holidays = get_month_holidays_list(year, month)
 
     stored_df = load_sheet_no_cache("config_times", pd.DataFrame())
-    if not stored_df.empty:
-        if "key" in stored_df.columns:
-            stored_df = stored_df.set_index("key")
-        elif "Unnamed: 0" in stored_df.columns:
-            stored_df = stored_df.rename(columns={"Unnamed: 0": "key"}).set_index("key")
+    if not stored_df.empty and len(stored_df.columns) > 0:
+        stored_df = stored_df.set_index(stored_df.columns[0])
             
     stored_times = stored_df.to_dict('index') if not stored_df.empty else {}
     
@@ -1948,8 +1945,8 @@ elif mode == "シフト自動生成（案）":
     
     w_targets_default = {}
     for key, val in stored_times.items():
-        if key.startswith("w_target_"):
-            name = key.replace("w_target_", "")
+        if str(key).startswith("w_target_"):
+            name = str(key).replace("w_target_", "")
             w_targets_default[name] = float(val.get("start", 160))
     
     def get_default_count(key, fallback):
