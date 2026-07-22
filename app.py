@@ -292,13 +292,28 @@ def send_line_notification(message):
         return False
 def load_sheet_no_cache(worksheet_name, default_df):
     try:
-        target_url = os.environ.get("MASTER_DATABASE_URL")
-        df = conn.read(spreadsheet=target_url, worksheet=worksheet_name, ttl=0)
+        # 1. Renderの設定（環境変数）からURLを取得
+        raw_url = os.environ.get("MASTER_DATABASE_URL")
+        if not raw_url:
+            # 環境変数がなければ、プログラム内のデフォルトを使う
+            raw_url = "https://docs.google.com/spreadsheets/d/1cajpaXBr6N8ecMGTR0L9-5AJ65yuRNSpdhheU6QR44U"
+
+        # 2. URLを掃除して「ID」だけを抜き出す（これが400エラー対策！）
+        # 例: https://docs.google.com/.../d/ABCD123/edit -> ABCD123 だけにする
+        if "/d/" in raw_url:
+            sheet_id = raw_url.split("/d/")[1].split("/")[0]
+        else:
+            sheet_id = raw_url
+
+        # 3. IDを直接指定して読み込む
+        df = conn.read(spreadsheet=sheet_id, worksheet=worksheet_name, ttl=0)
+        
         if df is not None and not df.empty:
             return df
         return default_df
     except Exception as e:
-        st.error(f"詳細エラー: {e}") # ここで400エラーの中身を確認
+        # 画面にデバッグ用の情報を少し出す（後で消せます）
+        st.error(f"❌ 接続エラー (400対策): {e}")
         return default_df
 def get_sundays(year, month):
     sundays = []
@@ -417,7 +432,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 TIME_OPTIONS = [f"{h:02d}:{m:02d}" for h in range(0, 31) for m in [0, 30]]# 24:30以降は不要なので24:00までにする
 TIME_OPTIONS = TIME_OPTIONS[:-1]
-MASTER_DATABASE_URL = os.environ.get("MASTER_DATABASE_URL", "https://docs.google.com/spreadsheets/d/1cajpaXBr6N8ecMGTR0L9-5AJ65yuRNSpdhheU6QR44U/edit?gid=0#gid=0")
+MASTER_DATABASE_URL = os.environ.get("MASTER_DATABASE_URL", "https://docs.google.com/spreadsheets/d/1cajpaXBr6N8ecMGTR0L9-5AJ65yuRNSpdhheU6QR44U")
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 if 'view_date' not in st.session_state:
