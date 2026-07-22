@@ -14,6 +14,7 @@ import json
 import jpholiday
 from google import genai
 import json
+import os
 from logic_ai import parse_requests_bundled
 from logic_sheet import append_parsed_data
 def save_user_request_single_row(user_name, updates_dict, worksheet_name):
@@ -271,8 +272,8 @@ def export_cleaning_handwriting_sheet(year, period_label):
 def get_japan_today():
     return datetime.now(JST).date()
 def send_line_notification(message):
-    LINE_ACCESS_TOKEN = st.secrets.get("LINE_ACCESS_TOKEN", "")
-    LINE_DESTINATION_ID = st.secrets.get("LINE_DESTINATION_ID", "")
+    LINE_ACCESS_TOKEN = os.environ.get("LINE_ACCESS_TOKEN", "")
+    LINE_DESTINATION_ID = os.environ.get("LINE_DESTINATION_ID", "")
     
     url = "https://api.line.me/v2/bot/message/push"
     headers = {
@@ -419,7 +420,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 TIME_OPTIONS = [f"{h:02d}:{m:02d}" for h in range(0, 31) for m in [0, 30]]# 24:30以降は不要なので24:00までにする
 TIME_OPTIONS = TIME_OPTIONS[:-1]
-MASTER_DATABASE_URL = st.secrets.get("MASTER_DATABASE_URL", "https://docs.google.com/spreadsheets/d/1cajpaXBr6N8ecMGTR0L9-5AJ65yuRNSpdhheU6QR44U/edit?gid=0#gid=0")
+MASTER_DATABASE_URL = os.environ.get("MASTER_DATABASE_URL", "https://docs.google.com/spreadsheets/d/1cajpaXBr6N8ecMGTR0L9-5AJ65yuRNSpdhheU6QR44U/edit?gid=0#gid=0")
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 if 'view_date' not in st.session_state:
