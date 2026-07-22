@@ -2555,10 +2555,13 @@ elif mode == "シフト自動生成（案）":
         
         if not w_individual_targets:
             stored_df = load_sheet_no_cache("config_times", pd.DataFrame())
+            if not stored_df.empty and len(stored_df.columns) > 0:
+                stored_df = stored_df.set_index(stored_df.columns[0])
+                
             stored_times = stored_df.to_dict('index') if not stored_df.empty else {}
             for key, val in stored_times.items():
-                if key.startswith("w_target_"):
-                    name = key.replace("w_target_", "")
+                if str(key).startswith("w_target_"):
+                    name = str(key).replace("w_target_", "")
                     w_individual_targets[name] = float(val.get("start", monthly_target_hours))
 
         w_staff_list = master_df[master_df["グループ"] == "W"]["名前"].tolist()
