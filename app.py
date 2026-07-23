@@ -2298,6 +2298,10 @@ elif mode == "シフト自動生成（案）":
         df_stores_all = get_all_stores_cached()
         s_data = df_stores_all[df_stores_all['sheet_url'] == SPREADSHEET_URL].iloc[0]
         
+        w_individual_targets = {}
+        for name in master_df[master_df["グループ"] == "W"]["名前"].tolist():
+            w_individual_targets[name] = st.session_state.get(f"w_target_{name}", monthly_target_default)
+            
         progress_bar = st.progress(0)
         status_text = st.empty()
         w_staff_list = []
@@ -3462,11 +3466,40 @@ elif mode == "シフト自動生成（案）":
             worksheet.set_row(memo_start_row, max_row_h)
 
             worksheet.print_area(0, 0, total_row_idx, fulfillment_col)
-            if st.session_state.last_shortage_alerts:
+            recalculated_alerts = []
+            if 'slot_memory' in st.session_state.last_generated_df.attrs:
+                actual_memory = st.session_state.last_generated_df.attrs['slot_memory']
+                day_shortages = {}
+                for sid, data in actual_memory.items():
+                    assigned = data.get("assigned_to")
+                    col = data["col"]
+                    name = assigned if assigned else ""
+                    
+                    is_filled = False
+                    if name:
+                        v1 = str(st.session_state.last_generated_df.at[name, col]).strip() if name in st.session_state.last_generated_df.index else ""
+                        v2 = str(st.session_state.last_generated_df.at[f"{name} ", col]).strip() if f"{name} " in st.session_state.last_generated_df.index else ""
+                        if "-" in v1 or "-" in v2:
+                            is_filled = True
+                    
+                    if not is_filled:
+                        d = data["day"]
+                        pos_jp = {"hd":"H昼", "kd":"K昼", "hn":"H夜", "kn":"K夜"}.get(data["position"], data["position"])
+                        if d not in day_shortages:
+                            day_shortages[d] = []
+                        day_shortages[d].append(pos_jp)
+
+                for d in sorted(day_shortages.keys()):
+                    positions = day_shortages[d]
+                    from collections import Counter
+                    pos_counts = Counter(positions)
+                    pos_str = ", ".join([f"{p}×{count}" if count > 1 else p for p, count in pos_counts.items()])
+                    recalculated_alerts.append(f"{d}日: {pos_str} 欠員")
+
+            if recalculated_alerts:
                 memo_col = fulfillment_col + 2
                 worksheet.write(header_row, memo_col, "⚠️ 欠員・調整が必要な箇所（募集・ヘルプ検討）", shortage_fmt)
-                
-                for i, msg in enumerate(st.session_state.last_shortage_alerts):
+                for i, msg in enumerate(recalculated_alerts):
                     worksheet.write(header_row + 2 + (i * 2), memo_col, f"・{msg}", shortage_fmt)
             worksheet.freeze_panes(header_row + 1, 2)
 
