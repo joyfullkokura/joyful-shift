@@ -2994,6 +2994,14 @@ elif mode == "シフト自動生成（案）":
             return round(total_net, 1)
 
         st.subheader("📊 社員の労働時間 達成状況")
+        
+        # 🧪 【デバッグ用】一時的にデータを画面に映し出します（解決後に消せます）
+        with st.expander("🔍 デバッグ用：読み込まれている生データの確認", expanded=True):
+            st.write("① スプレッドシートから読めた config_times のデータ:")
+            st.dataframe(stored_df)
+            st.write("② プログラムが認識した目標時間リスト:")
+            st.write(w_individual_targets)
+            st.write("③ デフォルトの目標時間 (monthly_target_hours):", monthly_target_hours)
         final_all_ok = True
         
         def clean_name_string(s):
