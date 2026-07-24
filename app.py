@@ -2332,8 +2332,20 @@ elif mode == "シフト自動生成（案）":
         else:
             req_load_raw = req_load_raw.drop_duplicates(subset=req_load_raw.columns[0]).set_index(req_load_raw.columns[0])
             req_load_raw.index = req_load_raw.index.astype(str).str.strip()
+            
+            def clean_name_string(s):
+                return str(s).strip().replace("（", "(").replace("）", ")").replace(" ", "").replace("　", "")
+                
             clean_names = [str(n).strip() for n in ALL_NAMES]
-            req_load = req_load_raw.reindex(index=clean_names).fillna(False)
+            req_load = pd.DataFrame(False, index=clean_names, columns=column_names)
+            
+            for orig_name in req_load_raw.index:
+                for target_name in clean_names:
+                    if clean_name_string(orig_name) == clean_name_string(target_name):
+                        req_load.loc[target_name] = req_load_raw.loc[orig_name]
+                        break
+                        
+            req_load = req_load.fillna(False)
             req_load = req_load.map(lambda x: str(x).upper().strip() in ["TRUE", "1", "1.0", "YES"])
         
         off_req_counts = req_load.sum(axis=1).to_dict()
@@ -2564,16 +2576,28 @@ elif mode == "シフト自動生成（案）":
 
         w_individual_targets = st.session_state.get('w_individual_targets', {})
         
+        stored_df = load_sheet_no_cache("config_times", pd.DataFrame())
+        if not stored_df.empty and len(stored_df.columns) > 0:
+            stored_df = stored_df.set_index(stored_df.columns[0])
+            
+        stored_times = stored_df.to_dict('index') if not stored_df.empty else {}
+        if "monthly_target_hours" in stored_times:
+            try: monthly_target_hours = float(stored_times["monthly_target_hours"].get("start", 160.0))
+            except: pass
+
         if not w_individual_targets:
-            stored_df = load_sheet_no_cache("config_times", pd.DataFrame())
-            if not stored_df.empty and len(stored_df.columns) > 0:
-                stored_df = stored_df.set_index(stored_df.columns[0])
+            def clean_name_string(s):
+                return str(s).strip().replace("（", "(").replace("）", ")").replace(" ", "").replace("　", "")
                 
-            stored_times = stored_df.to_dict('index') if not stored_df.empty else {}
             for key, val in stored_times.items():
                 if str(key).startswith("w_target_"):
-                    name = str(key).replace("w_target_", "")
-                    w_individual_targets[name] = float(val.get("start", monthly_target_hours))
+                    raw_name = str(key).replace("w_target_", "")
+                    matched_name = raw_name
+                    for member_name in master_df["名前"].tolist():
+                        if clean_name_string(raw_name) == clean_name_string(member_name):
+                            matched_name = member_name
+                            break
+                    w_individual_targets[matched_name] = float(val.get("start", monthly_target_hours))
 
         w_staff_list = master_df[master_df["グループ"] == "W"]["名前"].tolist()
         for name in w_staff_list:
@@ -2971,8 +2995,17 @@ elif mode == "シフト自動生成（案）":
 
         st.subheader("📊 社員の労働時間 達成状況")
         final_all_ok = True
+        
+        def clean_name_string(s):
+            return str(s).strip().replace("（", "(").replace("）", ")").replace(" ", "").replace("　", "")
+            
         for name in w_names:
-            target = w_individual_targets.get(name, monthly_target_hours)
+            target = monthly_target_hours
+            for t_name, t_val in w_individual_targets.items():
+                if clean_name_string(t_name) == clean_name_string(name):
+                    target = t_val
+                    break
+                    
             h = calc_hours_for_display(best_overall_df, name)
             
             if h >= target:
