@@ -324,6 +324,24 @@ def load_sheet_no_cache(worksheet_name, default_df):
     except Exception as e:
         st.error(f"❌ 接続エラー (スプレッドシート読込失敗): {e}")
         return default_df
+def load_individual_sheet_no_cache(worksheet_name, default_df):
+    try:
+        # MASTER_DATABASE_URL ではなく、店舗個別の SPREADSHEET_URL から直接1本釣りします
+        raw_url = SPREADSHEET_URL
+        if "/d/" in raw_url:
+            sheet_id = raw_url.split("/d/")[1].split("/")[0]
+        else:
+            sheet_id = raw_url
+
+        clean_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={worksheet_name}"
+        df = pd.read_csv(clean_url)
+        
+        if df is not None and not df.empty:
+            return df
+        return default_df
+    except Exception as e:
+        st.error(f"❌ 接続エラー (店舗個別データ読込失敗): {e}")
+        return default_df
 def get_sundays(year, month):
     sundays = []
     cal = calendar.Calendar(firstweekday=calendar.MONDAY)
@@ -393,7 +411,6 @@ def calc_work_and_break_combined(val1, val2):
     
     return final_net1, break1, final_net2, break2
 st.set_page_config(page_title="ジョイフル シフト管理", layout="wide", page_icon="🏪")
-# --- 右上のメニュー、GitHubアイコン、デプロイボタン、右下のロゴを完全に抹消する最強CSS ---
 st.markdown("""
     <style>
     /* 1. ヘッダー（右上のメニュー、デプロイボタン、GitHubリンク）を完全に消す */
@@ -441,7 +458,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 TIME_OPTIONS = [f"{h:02d}:{m:02d}" for h in range(0, 31) for m in [0, 30]]# 24:30以降は不要なので24:00までにする
 TIME_OPTIONS = TIME_OPTIONS[:-1]
-MASTER_DATABASE_URL = os.environ.get("MASTER_DATABASE_URL", "https://docs.google.com/spreadsheets/d/1cajpaXBr6N8ecMGTR0L9-5AJ65yuRNSpdhheU6QR44U")
+MASTER_DATABASE_URL = os.environ.get("MASTER_DATABASE_URL", "https://docs.google.com/spreadsheets/d/1e10-yBgz6nCt-cHMYiY6H544qu38-GD-CyBwCWrSPfM/edit")
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 if 'view_date' not in st.session_state:
@@ -456,11 +473,9 @@ WEEKDAYS_JP = ["月", "火", "水", "木", "金", "土", "日"]
 column_names = [f"{d}({WEEKDAYS_JP[calendar.weekday(year, month, d)]})" for d in range(1, num_days + 1)]
 REQ_SHEET = f"req_{year}_{month:02}"
 
-# 店舗選択前は、従業員リストを一度空にしてエラーを回避します
 master_df = pd.DataFrame()
 ALL_NAMES = []
 
-# すでに店舗にログインしている（session_state にURLがある）場合のみ、個別店舗シートからロードします
 if 'spreadsheet_url' in st.session_state:
     SPREADSHEET_URL_TEMP = st.session_state.spreadsheet_url
     try:
@@ -469,7 +484,6 @@ if 'spreadsheet_url' in st.session_state:
         else:
             temp_id = SPREADSHEET_URL_TEMP
             
-        # コネクションをバイパスし、個別店舗の従業員データをPandasで直接ロード
         clean_individual_url = f"https://docs.google.com/spreadsheets/d/{temp_id}/gviz/tq?tqx=out:csv&sheet=staff_master"
         individual_master = pd.read_csv(clean_individual_url)
         
@@ -499,7 +513,6 @@ def load_master():
         else:
             sheet_id = raw_url
             
-        # 店舗個別シートから直接1本釣りします
         clean_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=staff_master"
         df = pd.read_csv(clean_url)
         
@@ -507,6 +520,9 @@ def load_master():
         df['デザート'] = df['デザート'].astype(bool)
         if df is not None and not df.empty:
             df = df.dropna(how='all')
+            # ★従業員名の前後の不要な空白スペースを確実にトリムする
+            if '名前' in df.columns:
+                df['名前'] = df['名前'].astype(str).str.strip()
             df['レジ締め'] = df['レジ締め'].map(lambda x: str(x).upper() == 'TRUE')
             df['デザート'] = df['デザート'].map(lambda x: str(x).upper() == 'TRUE')
             df['週希望'] = pd.to_numeric(df['週希望'], errors='coerce').fillna(3).astype(int)
@@ -626,7 +642,6 @@ def load_confirmed_shift(sheet_name):
         else:
             sheet_id = raw_url
             
-        # 確定シフトもPandasで直接ロード
         clean_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
         df = pd.read_csv(clean_url)
         if df is not None and not df.empty:
@@ -835,7 +850,6 @@ if 'spreadsheet_url' not in st.session_state and not st.session_state.is_global_
         - システム管理者に連絡してください
         """)
         
-        # 再試行ボタン
         if st.button("🔄 再試行", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
@@ -1936,28 +1950,69 @@ elif mode == "シフト自動生成（案）":
     
     holidays = get_month_holidays_list(year, month)
 
-    stored_df = load_sheet_no_cache("config_times", pd.DataFrame())
+    stored_df = load_individual_sheet_no_cache("config_times", pd.DataFrame())
+    stored_times = {}
     if not stored_df.empty and len(stored_df.columns) > 0:
         stored_df = stored_df.set_index(stored_df.columns[0])
+        
+        # スプレッドシート側の「10:00:00」等の秒数表記を「10:00」へ5文字に統一する
+        for k, row in stored_df.iterrows():
+            start_val = str(row.get("start", "")).strip()
+            end_val = str(row.get("end", "")).strip()
             
-    stored_times = stored_df.to_dict('index') if not stored_df.empty else {}
+            if len(start_val) == 8 and start_val.count(":") == 2:
+                start_val = start_val[:5]
+            if len(end_val) == 8 and end_val.count(":") == 2:
+                end_val = end_val[:5]
+                
+            stored_times[k] = {"start": start_val, "end": end_val}
     
     transfer_baito_default = str(stored_times.get("transfer_baito_to_staff", {}).get("start", "True")).strip().lower() == "true"
     merge_staff_default = str(stored_times.get("merge_staff_shifts", {}).get("start", "True")).strip().lower() == "true"
     
+    monthly_target_default = 168.0
     if "monthly_target_hours" in stored_times:
-        monthly_target_default = float(stored_times["monthly_target_hours"].get("start", 160))
-    else:
-        monthly_target_default = 160.0
+        raw_target = str(stored_times["monthly_target_hours"].get("start", "168")).strip()
+        if raw_target and raw_target.lower() not in ["nan", "none", ""]:
+            try:
+                monthly_target_default = float(raw_target)
+            except ValueError:
+                monthly_target_default = 168.0
     
     w_targets_default = {}
     for key, val in stored_times.items():
         if str(key).startswith("w_target_"):
-            name = str(key).replace("w_target_", "")
-            w_targets_default[name] = float(val.get("start", 160))
-    
+            name = str(key).replace("w_target_", "").strip()
+            try:
+                start_val = str(val.get("start", "")).strip()
+                # ★値が nan, none, 空文字の場合は、上で取得した monthly_target_default に置き換える
+                if start_val and start_val.lower() not in ["nan", "none", ""]:
+                    w_targets_default[name] = float(start_val)
+                else:
+                    w_targets_default[name] = monthly_target_default
+            except:
+                w_targets_default[name] = monthly_target_default
+
+    # ★セッションステートに目標時間を同期（nanを排除して安全な値を格納）
+    for name, target_val in w_targets_default.items():
+        session_key = f"w_target_{name}"
+        # もし値が nan の場合は、安全な monthly_target_default を代入する
+        import math
+        if pd.isna(target_val) or (isinstance(target_val, float) and math.isnan(target_val)):
+            target_val = monthly_target_default
+        st.session_state[session_key] = target_val
     def get_default_count(key, fallback):
-        return int(stored_times.get(key, {}).get("start", fallback))
+        try:
+            val_raw = stored_times.get(key, {}).get("start", "")
+            if pd.isna(val_raw):
+                return int(fallback)
+            val_str = str(val_raw).strip().lower()
+            # ★文字列としての 'nan' や 'none', 空文字を確実にチェックしてフォールバック
+            if val_str in ["nan", "none", ""]:
+                return int(fallback)
+            return int(float(val_str))
+        except:
+            return int(fallback)
     
     staff_count_defaults = {
         "h_d_wd": get_default_count("staff_count_wd_hd", 2),
@@ -2218,7 +2273,6 @@ elif mode == "シフト自動生成（案）":
 
         st.info(f"📊 この設定での**概算総人時（休憩差引後）**: **{total_labor:.2f} 時間**")
         st.caption(f"内訳: 月-木 {pure_wd}日 × {wd_h:.1f}h + 金土日祝 {pure_we}日 × {we_h:.1f}h + 特定日 {len(selected_special_days)}日分")
-        all_settings_to_save.append({"key": "monthly_target_hours", "start": str(monthly_target_default), "end": ""})
         for name, target in w_individual_targets.items():
             all_settings_to_save.append({"key": f"w_target_{name}", "start": str(target), "end": ""})
         
@@ -2335,7 +2389,7 @@ elif mode == "シフト自動生成（案）":
             
             def clean_name_string(s):
                 return str(s).strip().replace("（", "(").replace("）", ")").replace(" ", "").replace("　", "")
-                
+                160
             clean_names = [str(n).strip() for n in ALL_NAMES]
             req_load = pd.DataFrame(False, index=clean_names, columns=column_names)
             
@@ -2576,14 +2630,13 @@ elif mode == "シフト自動生成（案）":
 
         w_individual_targets = st.session_state.get('w_individual_targets', {})
         
-        stored_df = load_sheet_no_cache("config_times", pd.DataFrame())
+        stored_df = load_individual_sheet_no_cache("config_times", pd.DataFrame())
         if not stored_df.empty and len(stored_df.columns) > 0:
             stored_df = stored_df.set_index(stored_df.columns[0])
             
         stored_times = stored_df.to_dict('index') if not stored_df.empty else {}
-        if "monthly_target_hours" in stored_times:
-            try: monthly_target_hours = float(stored_times["monthly_target_hours"].get("start", 160.0))
-            except: pass
+        
+        monthly_target_hours = 168.0
 
         if not w_individual_targets:
             def clean_name_string(s):
@@ -2597,7 +2650,16 @@ elif mode == "シフト自動生成（案）":
                         if clean_name_string(raw_name) == clean_name_string(member_name):
                             matched_name = member_name
                             break
-                    w_individual_targets[matched_name] = float(val.get("start", monthly_target_hours))
+                    
+                    # ★ 各社員の目標時間が nan または空欄の場合、monthly_target_hours を適用する
+                    raw_val = val.get("start", "")
+                    try:
+                        if pd.isna(raw_val) or str(raw_val).strip().lower() in ["nan", "none", ""]:
+                            w_individual_targets[matched_name] = monthly_target_hours
+                        else:
+                            w_individual_targets[matched_name] = float(raw_val)
+                    except:
+                        w_individual_targets[matched_name] = monthly_target_hours
 
         w_staff_list = master_df[master_df["グループ"] == "W"]["名前"].tolist()
         for name in w_staff_list:
@@ -4780,7 +4842,7 @@ if mode == "レジ締め作業":
                 "hourly_f": hourly_f_count, "hourly_k": hourly_k_count
             }
 
-            all_data = load_sheet_no_cache(layout_sheet, pd.DataFrame())
+            all_data = load_individual_sheet_no_cache(layout_sheet, pd.DataFrame())
             new_day_df = pd.DataFrame(save_rows)
             if not all_data.empty and "日付" in all_data.columns:
                 others = all_data[all_data["日付"] != date_str]
