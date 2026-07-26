@@ -1933,7 +1933,7 @@ elif mode == "シフト自動生成（案）":
                 ---
                 ### ステップ 4：シフトを生成する
                 *   一番下の「シフトを生成・再生成」ボタンをポチッと押します。
-                *   約10秒間、コンピュータが5パターンのシフトを作成し、その中から**「欠員が最も少なく、連勤がなくて公平な案」**を自動で1つ選び出します。
+                *   約10秒間、コンピュータが5パターンのでシフトを作成し、その中から**「欠員が最も少なく、連勤がなくて公平な案」**を自動で1つ選び出します。
                 *   画面に表示された表を見て、✖（欠員）が出ていないか確認してください。
                 ---
                 ### ステップ 5：Excelで仕上げ
@@ -1985,7 +1985,6 @@ elif mode == "シフト自動生成（案）":
             name = str(key).replace("w_target_", "").strip()
             try:
                 start_val = str(val.get("start", "")).strip()
-                # ★値が nan, none, 空文字の場合は、上で取得した monthly_target_default に置き換える
                 if start_val and start_val.lower() not in ["nan", "none", ""]:
                     w_targets_default[name] = float(start_val)
                 else:
@@ -1993,21 +1992,23 @@ elif mode == "シフト自動生成（案）":
             except:
                 w_targets_default[name] = monthly_target_default
 
-    # ★セッションステートに目標時間を同期（nanを排除して安全な値を格納）
-    for name, target_val in w_targets_default.items():
+    # ★ 名簿にいるWグループの全メンバーに対してセッションステートの目標時間を同期
+    w_members_for_init = master_df[master_df["グループ"] == "W"]["名前"].tolist() if not master_df.empty else []
+    for name in w_members_for_init:
         session_key = f"w_target_{name}"
-        # もし値が nan の場合は、安全な monthly_target_default を代入する
-        import math
-        if pd.isna(target_val) or (isinstance(target_val, float) and math.isnan(target_val)):
-            target_val = monthly_target_default
-        st.session_state[session_key] = target_val
+        if session_key not in st.session_state:
+            target_val = w_targets_default.get(name, monthly_target_default)
+            import math
+            if pd.isna(target_val) or (isinstance(target_val, float) and math.isnan(target_val)):
+                target_val = monthly_target_default
+            st.session_state[session_key] = target_val
+
     def get_default_count(key, fallback):
         try:
             val_raw = stored_times.get(key, {}).get("start", "")
             if pd.isna(val_raw):
                 return int(fallback)
             val_str = str(val_raw).strip().lower()
-            # ★文字列としての 'nan' や 'none', 空文字を確実にチェックしてフォールバック
             if val_str in ["nan", "none", ""]:
                 return int(fallback)
             return int(float(val_str))
@@ -2052,10 +2053,10 @@ elif mode == "シフト自動生成（案）":
         w_individual_targets = {}
         if w_members:
             for name in w_members:
-                default_val = w_targets_default.get(name, monthly_target_default)
+                default_val = st.session_state.get(f"w_target_{name}", monthly_target_default)
                 w_individual_targets[name] = st.number_input(
                     f"{name}",
-                    min_value=0.0, max_value=300.0, value=default_val, step=5.0,
+                    min_value=0.0, max_value=300.0, value=float(default_val), step=5.0,
                     key=f"w_target_{name}"
                 )
         else:
@@ -2316,6 +2317,7 @@ elif mode == "シフト自動生成（案）":
     selected_special_days = st.session_state.get("special_days_select", [])
     slot_data_map = st.session_state.get("_slot_data_map", {})
     
+    # ★ 画面の st.number_input から入力された個別目標時間をここで一元的に安全に取得
     w_individual_targets = {}
     if not master_df.empty:
         for name in master_df[master_df["グループ"] == "W"]["名前"].tolist():
@@ -2352,6 +2354,7 @@ elif mode == "シフト自動生成（案）":
         df_stores_all = get_all_stores_cached()
         s_data = df_stores_all[df_stores_all['sheet_url'] == SPREADSHEET_URL].iloc[0]
         
+        # ★ シフト生成処理開始時の目標時間リストの取得
         w_individual_targets = {}
         for name in master_df[master_df["グループ"] == "W"]["名前"].tolist():
             w_individual_targets[name] = st.session_state.get(f"w_target_{name}", monthly_target_default)
@@ -2389,7 +2392,6 @@ elif mode == "シフト自動生成（案）":
             
             def clean_name_string(s):
                 return str(s).strip().replace("（", "(").replace("）", ")").replace(" ", "").replace("　", "")
-                160
             clean_names = [str(n).strip() for n in ALL_NAMES]
             req_load = pd.DataFrame(False, index=clean_names, columns=column_names)
             
@@ -2539,7 +2541,7 @@ elif mode == "シフト自動生成（案）":
             current_w_hours = recalc_all_w_hours(trial_df, w_names)
             w_error_penalty = 0
             for name in w_names:
-                target = w_individual_targets.get(name, 168.0)
+                target = w_individual_targets.get(name, monthly_target_default)
                 actual = current_w_hours.get(name, 0.0)
                 w_error_penalty += abs(actual - target) * 2 
 
@@ -2626,47 +2628,12 @@ elif mode == "シフト自動生成（案）":
                                     extend_count += 1
                         except:
                             pass
-        monthly_target_hours = st.session_state.get('monthly_target_hours', 168.0) 
 
-        w_individual_targets = st.session_state.get('w_individual_targets', {})
-        
-        stored_df = load_individual_sheet_no_cache("config_times", pd.DataFrame())
-        if not stored_df.empty and len(stored_df.columns) > 0:
-            stored_df = stored_df.set_index(stored_df.columns[0])
-            
-        stored_times = stored_df.to_dict('index') if not stored_df.empty else {}
-        
-        monthly_target_hours = 168.0
-
-        if not w_individual_targets:
-            def clean_name_string(s):
-                return str(s).strip().replace("（", "(").replace("）", ")").replace(" ", "").replace("　", "")
-                
-            for key, val in stored_times.items():
-                if str(key).startswith("w_target_"):
-                    raw_name = str(key).replace("w_target_", "")
-                    matched_name = raw_name
-                    for member_name in master_df["名前"].tolist():
-                        if clean_name_string(raw_name) == clean_name_string(member_name):
-                            matched_name = member_name
-                            break
-                    
-                    # ★ 各社員の目標時間が nan または空欄の場合、monthly_target_hours を適用する
-                    raw_val = val.get("start", "")
-                    try:
-                        if pd.isna(raw_val) or str(raw_val).strip().lower() in ["nan", "none", ""]:
-                            w_individual_targets[matched_name] = monthly_target_hours
-                        else:
-                            w_individual_targets[matched_name] = float(raw_val)
-                    except:
-                        w_individual_targets[matched_name] = monthly_target_hours
-
-        w_staff_list = master_df[master_df["グループ"] == "W"]["名前"].tolist()
+        # ★ スプレッドシートやデフォルトで再度上書きされるバグを防ぐため、画面からの設定を一貫して100%信頼して引き当てる
+        w_individual_targets = {}
+        w_staff_list = master_df[master_df["グループ"] == "W"]["名前"].tolist() if not master_df.empty else []
         for name in w_staff_list:
-            if name not in w_individual_targets:
-                w_individual_targets[name] = monthly_target_hours
-
-        w_names = [str(n).strip() for n in w_staff_list] if 'w_staff_list' in dir() else []
+            w_individual_targets[name] = st.session_state.get(f"w_target_{name}", monthly_target_default)
 
         def calc_total_hours(df, name):
             """DataFrame から1人の合計実働時間を計算する"""
@@ -2835,7 +2802,7 @@ elif mode == "シフト自動生成（案）":
 
             all_achieved = True
             for name in w_names:
-                target = w_individual_targets.get(name, monthly_target_hours)
+                target = w_individual_targets.get(name, monthly_target_default)
                 if current_hours[name] < target:
                     all_achieved = False
                     break
@@ -2938,36 +2905,8 @@ elif mode == "シフト自動生成（案）":
             ]
             loop_count += 1
 
-            current_trial_shortage = 0
-            if 'slot_memory' in trial_df.attrs:
-                for sid, data in trial_df.attrs['slot_memory'].items():
-                    if not data.get("assigned_to"): 
-                        current_trial_shortage += 1
-            
-            shortage_penalty = current_trial_shortage * 100
-            
-            current_w_hours = recalc_all_w_hours(trial_df, w_names)
-            w_error_penalty = 0
-            for name in w_names:
-                target = w_individual_targets.get(name, 168.0)
-                actual = current_w_hours.get(name, 0.0)
-                w_error_penalty += abs(actual - target) * 2
-            
-            trial_score = shortage_penalty + w_error_penalty
-            
-            if trial_score < min_score:
-                min_score = trial_score
-                final_best_df = trial_df.copy() 
-                final_best_alerts = trial_alerts 
-                if 'slot_memory' in trial_df.attrs:
-                    final_best_df.attrs['slot_memory'] = trial_df.attrs['slot_memory'].copy()
-
-            progress_bar.progress((trial_idx + 1) / NUM_TRIALS)
-
-        
-        if final_best_df is not None:
-            best_overall_df = final_best_df 
-            st.session_state.last_shortage_alerts = final_best_alerts
+        if best_overall_df is not None:
+            st.session_state.last_generated_df = best_overall_df
         else:
             st.error("有効なシフト案を生成できませんでした。")
             st.stop()
@@ -2984,7 +2923,7 @@ elif mode == "シフト自動生成（案）":
                             net += n_net
             return round(net, 1)
         for name in w_names:
-            target = w_individual_targets.get(name, monthly_target_hours)
+            target = w_individual_targets.get(name, monthly_target_default)
             current = calc_hours(best_overall_df, name)
             deficit = target - current
 
@@ -3057,25 +2996,9 @@ elif mode == "シフト自動生成（案）":
 
         st.subheader("📊 社員の労働時間 達成状況")
         
-        # 🧪 【デバッグ用】一時的にデータを画面に映し出します（解決後に消せます）
-        with st.expander("🔍 デバッグ用：読み込まれている生データの確認", expanded=True):
-            st.write("① スプレッドシートから読めた config_times のデータ:")
-            st.dataframe(stored_df)
-            st.write("② プログラムが認識した目標時間リスト:")
-            st.write(w_individual_targets)
-            st.write("③ デフォルトの目標時間 (monthly_target_hours):", monthly_target_hours)
         final_all_ok = True
-        
-        def clean_name_string(s):
-            return str(s).strip().replace("（", "(").replace("）", ")").replace(" ", "").replace("　", "")
-            
         for name in w_names:
-            target = monthly_target_hours
-            for t_name, t_val in w_individual_targets.items():
-                if clean_name_string(t_name) == clean_name_string(name):
-                    target = t_val
-                    break
-                    
+            target = w_individual_targets.get(name, monthly_target_default)
             h = calc_hours_for_display(best_overall_df, name)
             
             if h >= target:
@@ -3450,7 +3373,7 @@ elif mode == "シフト自動生成（案）":
 
                 
                 if group == "W":
-                    target_h = w_individual_targets.get(name, 168.0)
+                    target_h = w_individual_targets.get(name, monthly_target_default)
                     
                     total_cell_ref = f"{col_letter(total_col)}{base_row + 1}"
                     
@@ -3503,12 +3426,6 @@ elif mode == "シフト自動生成（案）":
 
             total_break_sum_formula = f"=SUM({col_letter(break_col)}{first_data_row}:{col_letter(break_col)}{last_data_row})"
             worksheet.write_formula(total_row_idx, break_col, total_break_sum_formula, fmt_total_combined)
-            shortage_fmt = workbook.add_format({
-                'bold': True,
-                'font_color': 'red',
-                'size': 12,
-                'font_name': 'Meiryo UI'
-            })
             shortage_fmt = workbook.add_format({
                 'bold': True,
                 'font_color': 'red',
@@ -3602,9 +3519,16 @@ elif mode == "シフト自動生成（案）":
             if recalculated_alerts:
                 memo_col = fulfillment_col + 2
                 worksheet.write(header_row, memo_col, "⚠️ 欠員・調整が必要な箇所（募集・ヘルプ検討）", shortage_fmt)
+                
+                safe_rows = []
+                for r in range(header_row + 2, total_row_idx):
+                    if (r - (header_row + 1)) % 4 != 3:
+                        safe_rows.append(r)
+                
                 for i, msg in enumerate(recalculated_alerts):
-                    worksheet.write(header_row + 2 + (i * 2), memo_col, f"・{msg}", shortage_fmt)
-            worksheet.freeze_panes(header_row + 1, 2)
+                    if i < len(safe_rows):
+                        target_row = safe_rows[i]
+                        worksheet.write(target_row, memo_col, f"・{msg}", shortage_fmt)
 
             try:
                 raw_url = SPREADSHEET_URL
